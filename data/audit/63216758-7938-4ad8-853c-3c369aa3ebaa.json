@@ -1,0 +1,91 @@
+{
+  "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+  "goal": "好的，就这些，任务完成了",
+  "events": [
+    {
+      "event_id": "b8813a5e-c258-4abf-be08-f0ecc17884c0",
+      "event_type": "task_started",
+      "timestamp": "2026-02-10T07:13:22.000306+00:00",
+      "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Task started: 好的，就这些，任务完成了",
+      "details": {},
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "bd51c00c-cf78-4115-a05f-3eb36f8c3203",
+      "event_type": "plan_created",
+      "timestamp": "2026-02-10T07:13:25.541222+00:00",
+      "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+      "plan_id": "9f2699b4-f247-4640-957a-c4f89e2c21d2",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Plan created with 2 steps",
+      "details": {
+        "steps_count": 2
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "c602a374-03d5-4168-bd2c-7e34e6aa8470",
+      "event_type": "step_started",
+      "timestamp": "2026-02-10T07:13:25.541482+00:00",
+      "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+      "plan_id": "9f2699b4-f247-4640-957a-c4f89e2c21d2",
+      "step_id": "step_433e83f1",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step started: Analyze the goal and requirements",
+      "details": {
+        "description": "Analyze the goal and requirements"
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "50b75973-2220-49a9-a49e-8ae8a59ad97f",
+      "event_type": "step_completed",
+      "timestamp": "2026-02-10T07:13:25.541614+00:00",
+      "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+      "plan_id": "9f2699b4-f247-4640-957a-c4f89e2c21d2",
+      "step_id": "step_433e83f1",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step completed: Thought: Analyze the goal and requirements",
+      "details": {
+        "result": "Thought: Analyze the goal and requirements"
+      },
+      "metadata": {},
+      "duration_ms": 0
+    },
+    {
+      "event_id": "5dd7d6a0-c7c5-445c-afcb-de5c3cddf414",
+      "event_type": "critic_decision",
+      "timestamp": "2026-02-10T07:13:25.608029+00:00",
+      "task_id": "63216758-7938-4ad8-853c-3c369aa3ebaa",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Critic decision: stop (confidence: 0.8)",
+      "details": {
+        "decision": "stop",
+        "confidence": 0.8,
+        "reason": "All steps completed (fallback)"
+      },
+      "metadata": {},
+      "duration_ms": null
+    }
+  ],
+  "created_at": "2026-02-10T07:13:22.000291+00:00",
+  "completed_at": null,
+  "duration_ms": null,
+  "final_status": "pending",
+  "summary": null
+}

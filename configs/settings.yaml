@@ -1,0 +1,83 @@
+agent:
+  name: "mai-agent"
+  version: "1.0.0"
+  max_steps: 20
+  execution_timeout: 300
+  retry_on_failure: true
+  max_retries: 3
+
+llm:
+  provider: "minimax"
+  model: "minimax-text-01"
+  api_key: "${MINIMAX_API_KEY}"
+  temperature: 0.1
+  max_tokens: 4096
+  request_timeout: 60
+
+memory:
+  working_memory:
+    enabled: true
+  episodic_memory:
+    enabled: true
+    storage: "sqlite"
+    path: "./data/memory.db"
+  long_term_memory:
+    enabled: true
+    storage: "chroma"
+    path: "./data/chroma"
+    collection_name: "agent_memories"
+
+mcp:
+  enabled: true
+  tools:
+    terminal:
+      enabled: true
+      allowed_commands:
+        - "ls"
+        - "cat"
+        - "echo"
+        - "grep"
+        - "find"
+        - "head"
+        - "tail"
+        - "wc"
+        - "mkdir"
+        - "touch"
+        - "python"
+        - "python3"
+    file:
+      enabled: true
+      allowed_paths:
+        - "./"
+        - "./data"
+      max_file_size: 10485760
+    websearch:
+      enabled: false
+
+critic:
+  rule_critic:
+    enabled: true
+    max_steps: 20
+    max_cost: 100.0
+    allowed_tools:
+      - "terminal"
+      - "file"
+  llm_critic:
+    enabled: true
+    confidence_threshold: 0.7
+
+audit:
+  enabled: true
+  storage: "json"
+  path: "./data/audit"
+  log_level: "INFO"
+
+storage:
+  data_dir: "./data"
+  chroma_dir: "./data/chroma"
+  audit_dir: "./data/audit"
+
+logging:
+  level: "INFO"
+  format: "json"
+  include_timestamp: true

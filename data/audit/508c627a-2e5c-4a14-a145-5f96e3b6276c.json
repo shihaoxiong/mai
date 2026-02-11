@@ -1,0 +1,91 @@
+{
+  "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+  "goal": "列出当前目录的文件",
+  "events": [
+    {
+      "event_id": "5fca73d3-2cb3-4169-923f-0bf703ec2041",
+      "event_type": "task_started",
+      "timestamp": "2026-02-10T09:47:34.557107+00:00",
+      "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Task started: 列出当前目录的文件",
+      "details": {},
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "fd14b395-bcad-4c04-991d-45f58e5ef2ae",
+      "event_type": "plan_created",
+      "timestamp": "2026-02-10T09:47:34.582644+00:00",
+      "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+      "plan_id": "79902b86-1a90-4ec1-a131-2faac1c63f07",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Plan created with 2 steps",
+      "details": {
+        "steps_count": 2
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "a7af65b4-951e-4951-94da-3a3744e57782",
+      "event_type": "step_started",
+      "timestamp": "2026-02-10T09:47:34.582749+00:00",
+      "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+      "plan_id": "79902b86-1a90-4ec1-a131-2faac1c63f07",
+      "step_id": "step_d4776d36",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step started: Analyze goal: 列出当前目录的文件",
+      "details": {
+        "description": "Analyze goal: 列出当前目录的文件"
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "c291cb94-4c5c-4c13-9566-8d19cac04a08",
+      "event_type": "step_completed",
+      "timestamp": "2026-02-10T09:47:34.582806+00:00",
+      "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+      "plan_id": "79902b86-1a90-4ec1-a131-2faac1c63f07",
+      "step_id": "step_d4776d36",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step completed: Thought: Analyze goal: 列出当前目录的文件",
+      "details": {
+        "result": "Thought: Analyze goal: 列出当前目录的文件"
+      },
+      "metadata": {},
+      "duration_ms": 0
+    },
+    {
+      "event_id": "9b20926d-a4ff-4e09-a9f3-8f2ad041507f",
+      "event_type": "critic_decision",
+      "timestamp": "2026-02-10T09:47:34.583991+00:00",
+      "task_id": "508c627a-2e5c-4a14-a145-5f96e3b6276c",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Critic decision: continue (confidence: 0.7)",
+      "details": {
+        "decision": "continue",
+        "confidence": 0.7,
+        "reason": "Execution successful (fallback)"
+      },
+      "metadata": {},
+      "duration_ms": null
+    }
+  ],
+  "created_at": "2026-02-10T09:47:34.557088+00:00",
+  "completed_at": null,
+  "duration_ms": null,
+  "final_status": "pending",
+  "summary": null
+}

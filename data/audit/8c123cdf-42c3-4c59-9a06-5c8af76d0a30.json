@@ -1,0 +1,91 @@
+{
+  "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+  "goal": "好的，就这些，任务完成了",
+  "events": [
+    {
+      "event_id": "fd64719f-1c51-4e38-bfe5-c9e59199ff7a",
+      "event_type": "task_started",
+      "timestamp": "2026-02-10T10:06:43.562254+00:00",
+      "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Task started: 好的，就这些，任务完成了",
+      "details": {},
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "d9fd4bc6-7f17-4ab8-9087-55abb50d5346",
+      "event_type": "plan_created",
+      "timestamp": "2026-02-10T10:06:55.812224+00:00",
+      "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+      "plan_id": "e5490839-fcad-4ff1-9699-896462384322",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Plan created with 5 steps",
+      "details": {
+        "steps_count": 5
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "aab46978-87ce-4da4-bcc5-df4e4447a5d5",
+      "event_type": "step_started",
+      "timestamp": "2026-02-10T10:06:55.812808+00:00",
+      "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+      "plan_id": "e5490839-fcad-4ff1-9699-896462384322",
+      "step_id": "step_e6ecef8c",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step started: 确认当前任务状态和上下文",
+      "details": {
+        "description": "确认当前任务状态和上下文"
+      },
+      "metadata": {},
+      "duration_ms": null
+    },
+    {
+      "event_id": "b9820630-87d9-45ec-812f-56e649306c06",
+      "event_type": "step_completed",
+      "timestamp": "2026-02-10T10:06:55.813370+00:00",
+      "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+      "plan_id": "e5490839-fcad-4ff1-9699-896462384322",
+      "step_id": "step_e6ecef8c",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Step completed: Thought: 确认当前任务状态和上下文",
+      "details": {
+        "result": "Thought: 确认当前任务状态和上下文"
+      },
+      "metadata": {},
+      "duration_ms": 0
+    },
+    {
+      "event_id": "132727d4-f2c0-42ac-9a00-ac3b49ca2993",
+      "event_type": "critic_decision",
+      "timestamp": "2026-02-10T10:07:12.852183+00:00",
+      "task_id": "8c123cdf-42c3-4c59-9a06-5c8af76d0a30",
+      "plan_id": "",
+      "step_id": "",
+      "agent_name": "mai-agent",
+      "level": "INFO",
+      "message": "Critic decision: stop (confidence: 0.7)",
+      "details": {
+        "decision": "stop",
+        "confidence": 0.7,
+        "reason": "用户明确表示'任务完成了'，这是明确的停止信号。虽然当前步骤显示2/5且没有详细的执行记录，但用户作为任务发起者有权提前结束任务。可能的情况：1) 用户认为必要的工作已经完成，2) 这可能是一个测试场景，3) 用户可能对部分结果满意。尊重用户的终止决定。"
+      },
+      "metadata": {},
+      "duration_ms": null
+    }
+  ],
+  "created_at": "2026-02-10T10:06:43.562207+00:00",
+  "completed_at": null,
+  "duration_ms": null,
+  "final_status": "pending",
+  "summary": null
+}
