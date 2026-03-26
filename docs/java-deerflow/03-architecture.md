@@ -317,6 +317,7 @@ ${app.data-dir}/threads/{threadId}/
 
 - 默认使用 `data/threads/{threadId}/` 作为线程工作区根目录。
 - 通过 `mai.workspace.base-dir` 配置工作区根目录。
+- 当前最小恢复链路会将线程快照持久化到 `metadata/thread-state.json`，用于服务实例重建后恢复线程展示状态。
 
 ### 9.4 动态配置
 

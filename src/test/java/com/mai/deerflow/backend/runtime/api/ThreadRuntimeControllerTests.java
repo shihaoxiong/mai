@@ -13,7 +13,7 @@ class ThreadRuntimeControllerTests {
     private WebTestClient webTestClient;
 
     @Test
-    void shouldCreateRunQueryAndDeleteThread() {
+    void shouldCreateRunRecoverQueryAndDeleteThread() {
         webTestClient.post()
                 .uri("/api/threads")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -52,6 +52,7 @@ class ThreadRuntimeControllerTests {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.threadId").isEqualTo("api-thread")
+                .jsonPath("$.runId").isNotEmpty()
                 .jsonPath("$.runStatus").isEqualTo("COMPLETED");
 
         webTestClient.delete()

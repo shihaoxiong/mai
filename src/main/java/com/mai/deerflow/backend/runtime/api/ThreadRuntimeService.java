@@ -15,10 +15,14 @@ import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,18 +39,21 @@ public class ThreadRuntimeService {
     private final LeadAgentFactory leadAgentFactory;
     private final ChatModel chatModel;
     private final RunStateMachine runStateMachine;
+    private final ObjectMapper objectMapper;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
                                 RuntimeGraphFactory runtimeGraphFactory,
                                 LeadAgentFactory leadAgentFactory,
                                 ChatModel chatModel,
-                                RunStateMachine runStateMachine) {
+                                RunStateMachine runStateMachine,
+                                ObjectMapper objectMapper) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
         this.chatModel = chatModel;
         this.runStateMachine = runStateMachine;
+        this.objectMapper = objectMapper;
     }
 
     public ThreadStateSnapshot createThread(String requestedThreadId) {
@@ -57,6 +64,7 @@ public class ThreadRuntimeService {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         ThreadStateSnapshot snapshot = idleSnapshot(workspace);
         threadSnapshots.put(threadId, snapshot);
+        persistSnapshot(snapshot);
         return snapshot;
     }
 
@@ -65,10 +73,18 @@ public class ThreadRuntimeService {
         if (snapshot != null) {
             return snapshot;
         }
+        ThreadStateSnapshot persistedSnapshot = loadSnapshot(threadId).orElse(null);
+        if (persistedSnapshot != null) {
+            threadSnapshots.put(threadId, persistedSnapshot);
+            return persistedSnapshot;
+        }
         if (!threadWorkspaceService.exists(threadId)) {
             throw new ThreadNotFoundException(threadId);
         }
-        return idleSnapshot(threadWorkspaceService.getWorkspace(threadId));
+        ThreadStateSnapshot recoveredIdleSnapshot = idleSnapshot(threadWorkspaceService.getWorkspace(threadId));
+        threadSnapshots.put(threadId, recoveredIdleSnapshot);
+        persistSnapshot(recoveredIdleSnapshot);
+        return recoveredIdleSnapshot;
     }
 
     public ThreadStateSnapshot runThread(String threadId, String message) {
@@ -83,6 +99,7 @@ public class ThreadRuntimeService {
 
         ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING);
         threadSnapshots.put(threadId, runningSnapshot);
+        persistSnapshot(runningSnapshot);
 
         try {
             Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
@@ -109,6 +126,7 @@ public class ThreadRuntimeService {
             );
 
             threadSnapshots.put(threadId, snapshot);
+            persistSnapshot(snapshot);
             return snapshot;
         }
         catch (RuntimeException exception) {
@@ -125,6 +143,7 @@ public class ThreadRuntimeService {
                     deriveTitle(message)
             );
             threadSnapshots.put(threadId, failedSnapshot);
+            persistSnapshot(failedSnapshot);
             throw exception;
         }
     }
@@ -218,5 +237,40 @@ public class ThreadRuntimeService {
                 snapshot.suggestions(),
                 snapshot.title()
         );
+    }
+
+    private void persistSnapshot(ThreadStateSnapshot snapshot) {
+        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(snapshot.threadId());
+        Path snapshotFile = snapshotFile(workspace);
+
+        try {
+            Files.createDirectories(snapshotFile.getParent());
+            objectMapper.writeValue(snapshotFile.toFile(), snapshot);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to persist thread snapshot for " + snapshot.threadId(), exception);
+        }
+    }
+
+    private Optional<ThreadStateSnapshot> loadSnapshot(String threadId) {
+        if (!threadWorkspaceService.exists(threadId)) {
+            return Optional.empty();
+        }
+
+        Path snapshotFile = snapshotFile(threadWorkspaceService.getWorkspace(threadId));
+        if (!Files.isRegularFile(snapshotFile)) {
+            return Optional.empty();
+        }
+
+        try {
+            return Optional.of(objectMapper.readValue(snapshotFile.toFile(), ThreadStateSnapshot.class));
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to load thread snapshot for " + threadId, exception);
+        }
+    }
+
+    private Path snapshotFile(ThreadWorkspace workspace) {
+        return workspace.threadRoot().resolve("metadata").resolve("thread-state.json");
     }
 }
