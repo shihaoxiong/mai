@@ -10,9 +10,11 @@ import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
+import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
+import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,6 +42,7 @@ public class ThreadRuntimeService {
     private final ChatModel chatModel;
     private final RunStateMachine runStateMachine;
     private final ObjectMapper objectMapper;
+    private final UploadService uploadService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -47,13 +50,15 @@ public class ThreadRuntimeService {
                                 LeadAgentFactory leadAgentFactory,
                                 ChatModel chatModel,
                                 RunStateMachine runStateMachine,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                UploadService uploadService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
         this.chatModel = chatModel;
         this.runStateMachine = runStateMachine;
         this.objectMapper = objectMapper;
+        this.uploadService = uploadService;
     }
 
     public ThreadStateSnapshot createThread(String requestedThreadId) {
@@ -71,12 +76,17 @@ public class ThreadRuntimeService {
     public ThreadStateSnapshot getThread(String threadId) {
         ThreadStateSnapshot snapshot = threadSnapshots.get(threadId);
         if (snapshot != null) {
-            return snapshot;
+            ThreadStateSnapshot refreshedSnapshot = refreshUploads(snapshot);
+            threadSnapshots.put(threadId, refreshedSnapshot);
+            persistSnapshot(refreshedSnapshot);
+            return refreshedSnapshot;
         }
         ThreadStateSnapshot persistedSnapshot = loadSnapshot(threadId).orElse(null);
         if (persistedSnapshot != null) {
-            threadSnapshots.put(threadId, persistedSnapshot);
-            return persistedSnapshot;
+            ThreadStateSnapshot refreshedSnapshot = refreshUploads(persistedSnapshot);
+            threadSnapshots.put(threadId, refreshedSnapshot);
+            persistSnapshot(refreshedSnapshot);
+            return refreshedSnapshot;
         }
         if (!threadWorkspaceService.exists(threadId)) {
             throw new ThreadNotFoundException(threadId);
@@ -117,7 +127,7 @@ public class ThreadRuntimeService {
                     runId,
                     runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.COMPLETED),
                     workspace.toState(),
-                    List.of(),
+                    currentUploads(threadId),
                     artifactsFrom(state),
                     List.of(),
                     new ApprovalState(null, ApprovalStatus.NONE, null),
@@ -135,7 +145,7 @@ public class ThreadRuntimeService {
                     runId,
                     runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.FAILED),
                     workspace.toState(),
-                    List.of(),
+                    currentUploads(threadId),
                     List.of(),
                     List.of(),
                     new ApprovalState(null, ApprovalStatus.NONE, null),
@@ -162,7 +172,7 @@ public class ThreadRuntimeService {
                 null,
                 RunStatus.IDLE,
                 workspace.toState(),
-                List.of(),
+                currentUploads(workspace.threadId()),
                 List.of(),
                 List.of(),
                 new ApprovalState(null, ApprovalStatus.NONE, null),
@@ -224,19 +234,38 @@ public class ThreadRuntimeService {
         return normalized.length() <= 48 ? normalized : normalized.substring(0, 48);
     }
 
-    private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot, String runId, RunStatus targetStatus) {
+    private ThreadStateSnapshot refreshUploads(ThreadStateSnapshot snapshot) {
         return new ThreadStateSnapshot(
                 snapshot.threadId(),
-                runId,
-                runStateMachine.transition(snapshot.runStatus(), targetStatus),
+                snapshot.runId(),
+                snapshot.runStatus(),
                 snapshot.workspace(),
-                snapshot.uploads(),
+                currentUploads(snapshot.threadId()),
                 snapshot.artifacts(),
                 snapshot.todos(),
                 snapshot.approval(),
                 snapshot.suggestions(),
                 snapshot.title()
         );
+    }
+
+    private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot, String runId, RunStatus targetStatus) {
+        return new ThreadStateSnapshot(
+                snapshot.threadId(),
+                runId,
+                runStateMachine.transition(snapshot.runStatus(), targetStatus),
+                snapshot.workspace(),
+                currentUploads(snapshot.threadId()),
+                snapshot.artifacts(),
+                snapshot.todos(),
+                snapshot.approval(),
+                snapshot.suggestions(),
+                snapshot.title()
+        );
+    }
+
+    private List<UploadRef> currentUploads(String threadId) {
+        return uploadService.listUploads(threadId);
     }
 
     private void persistSnapshot(ThreadStateSnapshot snapshot) {

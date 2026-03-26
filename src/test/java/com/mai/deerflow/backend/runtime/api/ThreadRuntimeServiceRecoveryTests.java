@@ -6,6 +6,7 @@ import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
+import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;
@@ -38,6 +39,9 @@ class ThreadRuntimeServiceRecoveryTests {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UploadService uploadService;
+
     @Test
     void shouldRecoverThreadSnapshotFromWorkspaceMetadata() {
         threadRuntimeService.createThread("recovery-thread");
@@ -49,7 +53,8 @@ class ThreadRuntimeServiceRecoveryTests {
                 leadAgentFactory,
                 chatModel,
                 runStateMachine,
-                objectMapper
+                objectMapper,
+                uploadService
         );
 
         ThreadStateSnapshot recoveredSnapshot = recoveredService.getThread("recovery-thread");

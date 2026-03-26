@@ -19,4 +19,7 @@
 - run thread: `POST /api/threads/{threadId}/runs`
 - delete thread: `DELETE /api/threads/{threadId}`
 - list models: `GET /api/models`
+- upload files: `POST /api/threads/{threadId}/uploads`
+- list uploads: `GET /api/threads/{threadId}/uploads/list`
+- delete upload: `DELETE /api/threads/{threadId}/uploads/{filename}`
 - tests: `./mvnw test`

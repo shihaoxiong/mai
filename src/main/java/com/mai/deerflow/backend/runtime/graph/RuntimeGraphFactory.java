@@ -10,7 +10,9 @@ import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
+import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.contract.WorkspaceState;
+import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import com.mai.deerflow.backend.runtime.workspace.WorkspaceArea;
@@ -35,9 +37,11 @@ public class RuntimeGraphFactory {
     public static final String PERSIST_ARTIFACTS_NODE = "persistArtifacts";
 
     private final ThreadWorkspaceService threadWorkspaceService;
+    private final UploadService uploadService;
 
-    public RuntimeGraphFactory(ThreadWorkspaceService threadWorkspaceService) {
+    public RuntimeGraphFactory(ThreadWorkspaceService threadWorkspaceService, UploadService uploadService) {
         this.threadWorkspaceService = threadWorkspaceService;
+        this.uploadService = uploadService;
     }
 
     public CompiledGraph create(AsyncNodeActionWithConfig runLeadAgentNode) {
@@ -88,9 +92,12 @@ public class RuntimeGraphFactory {
 
     private CompletableFuture<Map<String, Object>> assembleContextNode(OverAllState state, RunnableConfig config) {
         String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
+        String threadId = resolveThreadId(state, config);
+        List<UploadRef> uploads = uploadService.listUploads(threadId);
         return CompletableFuture.completedFuture(Map.of(
                 RuntimeStateKeys.CONTEXT_READY, true,
-                RuntimeStateKeys.USER_INPUT, userInput
+                RuntimeStateKeys.USER_INPUT, userInput,
+                RuntimeStateKeys.UPLOADS, uploads
         ));
     }
 
