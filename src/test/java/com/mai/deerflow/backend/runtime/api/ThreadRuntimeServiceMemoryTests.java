@@ -17,6 +17,7 @@ import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryStore;
 import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
+import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceProperties;
@@ -61,6 +62,14 @@ class ThreadRuntimeServiceMemoryTests {
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(fileMemoryStore, Runnable::run);
+        SubTaskExecutor subTaskExecutor = new SubTaskExecutor(
+                threadWorkspaceService,
+                leadAgentFactory,
+                chatModel,
+                threadEventService,
+                new ObjectMapper(),
+                Runnable::run
+        );
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(
                 threadWorkspaceService,
@@ -73,7 +82,8 @@ class ThreadRuntimeServiceMemoryTests {
                 uploadService,
                 artifactService,
                 threadEventService,
-                memoryExtractorJob
+                memoryExtractorJob,
+                subTaskExecutor
         );
 
         String threadId = "memory-success-" + UUID.randomUUID();
@@ -141,6 +151,14 @@ class ThreadRuntimeServiceMemoryTests {
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(failingMemoryStore, Runnable::run);
+        SubTaskExecutor subTaskExecutor = new SubTaskExecutor(
+                threadWorkspaceService,
+                leadAgentFactory,
+                chatModel,
+                threadEventService,
+                new ObjectMapper(),
+                Runnable::run
+        );
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(
                 threadWorkspaceService,
@@ -153,7 +171,8 @@ class ThreadRuntimeServiceMemoryTests {
                 uploadService,
                 artifactService,
                 threadEventService,
-                memoryExtractorJob
+                memoryExtractorJob,
+                subTaskExecutor
         );
 
         String threadId = "memory-failure-" + UUID.randomUUID();

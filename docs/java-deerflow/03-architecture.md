@@ -224,6 +224,7 @@ flowchart TD
 
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
+- Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
 
 ## 7. 状态模型设计
 
@@ -403,6 +404,13 @@ DeerFlow 的 subagent 不是简单直接调用另一个 Agent，而是后台任�
 
 - MVP：应用内线程池 + 状态表。
 - 增强版：队列化执行，可切换到 MQ/调度器。
+
+当前骨架实现：
+
+- 已提供应用内 `SubTaskExecutor`，默认使用应用内异步执行器运行子任务。
+- 子任务状态会持久化到 `data/threads/{threadId}/metadata/subtasks/`。
+- `task` 工具当前支持 `submit` 和 `status` 两种动作；`submit` 可选择等待完成后直接返回结果。
+- 子任务开始与完成/失败会发出 `subtask.started` / `subtask.updated` 事件。
 
 ## 12. 安全设计
 

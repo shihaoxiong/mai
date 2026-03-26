@@ -23,6 +23,7 @@ import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
+import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
@@ -66,6 +67,7 @@ public class ThreadRuntimeService {
     private final ArtifactService artifactService;
     private final ThreadEventService threadEventService;
     private final MemoryExtractorJob memoryExtractorJob;
+    private final SubTaskExecutor subTaskExecutor;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -78,7 +80,8 @@ public class ThreadRuntimeService {
                                 UploadService uploadService,
                                 ArtifactService artifactService,
                                 ThreadEventService threadEventService,
-                                MemoryExtractorJob memoryExtractorJob) {
+                                MemoryExtractorJob memoryExtractorJob,
+                                SubTaskExecutor subTaskExecutor) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -90,6 +93,7 @@ public class ThreadRuntimeService {
         this.artifactService = artifactService;
         this.threadEventService = threadEventService;
         this.memoryExtractorJob = memoryExtractorJob;
+        this.subTaskExecutor = subTaskExecutor;
     }
 
     /**
@@ -410,14 +414,6 @@ public class ThreadRuntimeService {
     }
 
     private AsyncNodeActionWithConfig runLeadAgentNode() {
-        var leadAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
-                .name("runtime-lead-agent")
-                .instruction("You are the Java DeerFlow backend lead agent.")
-                .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
-                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
-                .saver(new MemorySaver())
-                .build());
-
         /**
          * 将 lead agent 封装成 graph 节点，便于外层继续统一处理状态和后处理。
          */
@@ -425,11 +421,21 @@ public class ThreadRuntimeService {
             String rawUserInput = state.value(RuntimeStateKeys.USER_INPUT, "");
             String agentInput = state.value(RuntimeStateKeys.AGENT_INPUT, String.class)
                     .orElseGet(() -> state.value(RuntimeStateKeys.USER_INPUT, ""));
+            String parentThreadId = state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead");
+            String parentRunId = state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run");
             String agentThreadId = "%s:%s".formatted(
-                    state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead"),
-                    state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run")
+                    parentThreadId,
+                    parentRunId
             );
             try {
+                var leadAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
+                        .name("runtime-lead-agent")
+                        .instruction("You are the Java DeerFlow backend lead agent.")
+                        .tools(List.of(subTaskExecutor.taskTool(parentThreadId, parentRunId)))
+                        .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
+                        .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                        .saver(new MemorySaver())
+                        .build());
                 RunnableConfig agentConfig = RunnableConfig.builder().threadId(agentThreadId).build();
                 AssistantMessage assistantMessage = leadAgent.call(agentInput, agentConfig);
 
