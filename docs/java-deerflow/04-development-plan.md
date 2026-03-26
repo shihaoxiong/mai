@@ -116,7 +116,7 @@
   产出：PDF、PPT、Excel、Word 的转换适配层。
   完成标准：转换成功时生成 Markdown 派生文件，失败时保留原文件并返回错误信息。
 
-- [ ] P2-07 实现 `ArtifactService`
+- [x] P2-07 实现 `ArtifactService`
   产出：产物索引、元数据记录、下载与预览接口。
   完成标准：线程内生成的文件可通过 HTTP 访问。
 

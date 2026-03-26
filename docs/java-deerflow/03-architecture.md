@@ -156,6 +156,7 @@ flowchart LR
 - 已支持线程级上传、列表和删除。
 - 已支持为 `.txt/.md` 生成或复用 Markdown 视图。
 - 对 `pdf/ppt/pptx/xls/xlsx/doc/docx` 当前会生成可诊断的 Markdown 占位文件，后续可替换为真实解析器。
+- 已支持线程级产物列表与文件访问接口。
 
 ### 5.10 Config Module
 

@@ -2,6 +2,7 @@ package com.mai.deerflow.backend.runtime.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
+import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
@@ -42,6 +43,9 @@ class ThreadRuntimeServiceRecoveryTests {
     @Autowired
     private UploadService uploadService;
 
+    @Autowired
+    private ArtifactService artifactService;
+
     @Test
     void shouldRecoverThreadSnapshotFromWorkspaceMetadata() {
         threadRuntimeService.createThread("recovery-thread");
@@ -54,7 +58,8 @@ class ThreadRuntimeServiceRecoveryTests {
                 chatModel,
                 runStateMachine,
                 objectMapper,
-                uploadService
+                uploadService,
+                artifactService
         );
 
         ThreadStateSnapshot recoveredSnapshot = recoveredService.getThread("recovery-thread");

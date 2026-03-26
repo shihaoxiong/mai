@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
@@ -39,7 +40,8 @@ class RuntimeGraphFactoryTests {
         threadWorkspaceService = new ThreadWorkspaceService(properties);
         runtimeGraphFactory = new RuntimeGraphFactory(
                 threadWorkspaceService,
-                new UploadService(threadWorkspaceService, new DocumentMarkdownConversionService())
+                new UploadService(threadWorkspaceService, new DocumentMarkdownConversionService()),
+                new ArtifactService(threadWorkspaceService)
         );
     }
 

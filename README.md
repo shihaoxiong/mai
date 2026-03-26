@@ -22,4 +22,6 @@
 - upload files: `POST /api/threads/{threadId}/uploads`
 - list uploads: `GET /api/threads/{threadId}/uploads/list`
 - delete upload: `DELETE /api/threads/{threadId}/uploads/{filename}`
+- list artifacts: `GET /api/threads/{threadId}/artifacts/list`
+- read artifact: `GET /api/threads/{threadId}/artifacts/{artifactPath}`
 - tests: `./mvnw test`

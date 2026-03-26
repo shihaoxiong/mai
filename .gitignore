@@ -2,6 +2,7 @@
 .vscode/
 .mcp_config.json
 ./data/
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

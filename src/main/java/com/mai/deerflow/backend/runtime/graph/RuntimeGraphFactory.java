@@ -8,6 +8,7 @@ import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
+import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
@@ -18,15 +19,9 @@ import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import com.mai.deerflow.backend.runtime.workspace.WorkspaceArea;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Stream;
 
 @Component
 public class RuntimeGraphFactory {
@@ -38,10 +33,14 @@ public class RuntimeGraphFactory {
 
     private final ThreadWorkspaceService threadWorkspaceService;
     private final UploadService uploadService;
+    private final ArtifactService artifactService;
 
-    public RuntimeGraphFactory(ThreadWorkspaceService threadWorkspaceService, UploadService uploadService) {
+    public RuntimeGraphFactory(ThreadWorkspaceService threadWorkspaceService,
+                               UploadService uploadService,
+                               ArtifactService artifactService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.uploadService = uploadService;
+        this.artifactService = artifactService;
     }
 
     public CompiledGraph create(AsyncNodeActionWithConfig runLeadAgentNode) {
@@ -103,44 +102,12 @@ public class RuntimeGraphFactory {
 
     private CompletableFuture<Map<String, Object>> persistArtifactsNode(OverAllState state, RunnableConfig config) {
         String threadId = resolveThreadId(state, config);
-        WorkspaceState workspaceState = state.value(RuntimeStateKeys.WORKSPACE, WorkspaceState.class)
-                .orElseThrow(() -> new IllegalStateException("workspace state is missing"));
-
-        List<ArtifactRef> artifacts = collectArtifacts(threadId, Path.of(workspaceState.outputsPath()));
+        List<ArtifactRef> artifacts = artifactService.listArtifacts(threadId);
 
         return CompletableFuture.completedFuture(Map.of(
                 RuntimeStateKeys.ARTIFACTS, artifacts,
                 RuntimeStateKeys.RUN_STATUS, RunStatus.COMPLETED
         ));
-    }
-
-    private List<ArtifactRef> collectArtifacts(String threadId, Path outputsRoot) {
-        if (!Files.isDirectory(outputsRoot)) {
-            return List.of();
-        }
-
-        try (Stream<Path> paths = Files.walk(outputsRoot)) {
-            return paths.filter(Files::isRegularFile)
-                    .sorted(Comparator.naturalOrder())
-                    .map(path -> new ArtifactRef(
-                            path.getFileName().toString(),
-                            threadWorkspaceService.toVirtualPath(threadId, path),
-                            Optional.ofNullable(probeContentType(path)).orElse("application/octet-stream")
-                    ))
-                    .toList();
-        }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to collect artifacts from " + outputsRoot, exception);
-        }
-    }
-
-    private String probeContentType(Path path) {
-        try {
-            return Files.probeContentType(path);
-        }
-        catch (IOException exception) {
-            return null;
-        }
     }
 
     private String resolveThreadId(OverAllState state, RunnableConfig config) {

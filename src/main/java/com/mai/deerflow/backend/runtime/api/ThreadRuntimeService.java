@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
+import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
 import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
@@ -43,6 +44,7 @@ public class ThreadRuntimeService {
     private final RunStateMachine runStateMachine;
     private final ObjectMapper objectMapper;
     private final UploadService uploadService;
+    private final ArtifactService artifactService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -51,7 +53,8 @@ public class ThreadRuntimeService {
                                 ChatModel chatModel,
                                 RunStateMachine runStateMachine,
                                 ObjectMapper objectMapper,
-                                UploadService uploadService) {
+                                UploadService uploadService,
+                                ArtifactService artifactService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -59,6 +62,7 @@ public class ThreadRuntimeService {
         this.runStateMachine = runStateMachine;
         this.objectMapper = objectMapper;
         this.uploadService = uploadService;
+        this.artifactService = artifactService;
     }
 
     public ThreadStateSnapshot createThread(String requestedThreadId) {
@@ -76,14 +80,14 @@ public class ThreadRuntimeService {
     public ThreadStateSnapshot getThread(String threadId) {
         ThreadStateSnapshot snapshot = threadSnapshots.get(threadId);
         if (snapshot != null) {
-            ThreadStateSnapshot refreshedSnapshot = refreshUploads(snapshot);
+            ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(snapshot);
             threadSnapshots.put(threadId, refreshedSnapshot);
             persistSnapshot(refreshedSnapshot);
             return refreshedSnapshot;
         }
         ThreadStateSnapshot persistedSnapshot = loadSnapshot(threadId).orElse(null);
         if (persistedSnapshot != null) {
-            ThreadStateSnapshot refreshedSnapshot = refreshUploads(persistedSnapshot);
+            ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(persistedSnapshot);
             threadSnapshots.put(threadId, refreshedSnapshot);
             persistSnapshot(refreshedSnapshot);
             return refreshedSnapshot;
@@ -128,7 +132,7 @@ public class ThreadRuntimeService {
                     runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.COMPLETED),
                     workspace.toState(),
                     currentUploads(threadId),
-                    artifactsFrom(state),
+                    currentArtifacts(threadId),
                     List.of(),
                     new ApprovalState(null, ApprovalStatus.NONE, null),
                     suggestionsFrom(state),
@@ -173,7 +177,7 @@ public class ThreadRuntimeService {
                 RunStatus.IDLE,
                 workspace.toState(),
                 currentUploads(workspace.threadId()),
-                List.of(),
+                currentArtifacts(workspace.threadId()),
                 List.of(),
                 new ApprovalState(null, ApprovalStatus.NONE, null),
                 List.of(),
@@ -207,15 +211,6 @@ public class ThreadRuntimeService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<ArtifactRef> artifactsFrom(OverAllState state) {
-        Object artifacts = state.value(RuntimeStateKeys.ARTIFACTS).orElse(List.of());
-        if (artifacts instanceof List<?> artifactList && artifactList.stream().allMatch(ArtifactRef.class::isInstance)) {
-            return (List<ArtifactRef>) artifactList;
-        }
-        return List.of();
-    }
-
-    @SuppressWarnings("unchecked")
     private List<String> suggestionsFrom(OverAllState state) {
         Object suggestions = state.value(RuntimeStateKeys.SUGGESTIONS).orElse(List.of());
         if (suggestions instanceof List<?> suggestionList) {
@@ -234,14 +229,14 @@ public class ThreadRuntimeService {
         return normalized.length() <= 48 ? normalized : normalized.substring(0, 48);
     }
 
-    private ThreadStateSnapshot refreshUploads(ThreadStateSnapshot snapshot) {
+    private ThreadStateSnapshot refreshThreadSnapshot(ThreadStateSnapshot snapshot) {
         return new ThreadStateSnapshot(
                 snapshot.threadId(),
                 snapshot.runId(),
                 snapshot.runStatus(),
                 snapshot.workspace(),
                 currentUploads(snapshot.threadId()),
-                snapshot.artifacts(),
+                currentArtifacts(snapshot.threadId()),
                 snapshot.todos(),
                 snapshot.approval(),
                 snapshot.suggestions(),
@@ -256,7 +251,7 @@ public class ThreadRuntimeService {
                 runStateMachine.transition(snapshot.runStatus(), targetStatus),
                 snapshot.workspace(),
                 currentUploads(snapshot.threadId()),
-                snapshot.artifacts(),
+                currentArtifacts(snapshot.threadId()),
                 snapshot.todos(),
                 snapshot.approval(),
                 snapshot.suggestions(),
@@ -266,6 +261,10 @@ public class ThreadRuntimeService {
 
     private List<UploadRef> currentUploads(String threadId) {
         return uploadService.listUploads(threadId);
+    }
+
+    private List<ArtifactRef> currentArtifacts(String threadId) {
+        return artifactService.listArtifacts(threadId);
     }
 
     private void persistSnapshot(ThreadStateSnapshot snapshot) {
