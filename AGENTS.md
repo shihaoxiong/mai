@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P2-04` Implement `SkillRegistryService`.
-2. `P2-05` Implement `UploadService`.
-3. `P2-06` Implement document-to-Markdown conversion.
-4. `P2-07` Implement `ArtifactService`.
-5. `P2-08` Integrate `SummarizationHook` and `TodoListInterceptor`.
+1. `P2-05` Implement `UploadService`.
+2. `P2-06` Implement document-to-Markdown conversion.
+3. `P2-07` Implement `ArtifactService`.
+4. `P2-08` Integrate `SummarizationHook` and `TodoListInterceptor`.
+5. `P2-09` Implement the approval recovery path.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 
