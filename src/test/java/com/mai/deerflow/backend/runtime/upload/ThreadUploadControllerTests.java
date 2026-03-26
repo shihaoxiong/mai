@@ -44,14 +44,16 @@ class ThreadUploadControllerTests {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$[0].name").isEqualTo("brief.txt")
-                .jsonPath("$[0].originalVirtualPath").isEqualTo("/uploads/brief.txt");
+                .jsonPath("$[0].originalVirtualPath").isEqualTo("/uploads/brief.txt")
+                .jsonPath("$[0].markdownVirtualPath").isEqualTo("/uploads/brief.md");
 
         webTestClient.get()
                 .uri("/api/threads/upload-thread/uploads/list")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$[0].name").isEqualTo("brief.txt");
+                .jsonPath("$[0].name").isEqualTo("brief.txt")
+                .jsonPath("$[0].markdownVirtualPath").isEqualTo("/uploads/brief.md");
 
         webTestClient.get()
                 .uri("/api/threads/upload-thread")
@@ -59,7 +61,8 @@ class ThreadUploadControllerTests {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.uploads[0].name").isEqualTo("brief.txt")
-                .jsonPath("$.uploads[0].originalVirtualPath").isEqualTo("/uploads/brief.txt");
+                .jsonPath("$.uploads[0].originalVirtualPath").isEqualTo("/uploads/brief.txt")
+                .jsonPath("$.uploads[0].markdownVirtualPath").isEqualTo("/uploads/brief.md");
 
         webTestClient.delete()
                 .uri("/api/threads/upload-thread/uploads/brief.txt")

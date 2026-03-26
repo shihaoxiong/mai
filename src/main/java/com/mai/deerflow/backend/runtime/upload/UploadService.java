@@ -18,9 +18,12 @@ import java.util.stream.Stream;
 public class UploadService {
 
     private final ThreadWorkspaceService threadWorkspaceService;
+    private final DocumentMarkdownConversionService documentMarkdownConversionService;
 
-    public UploadService(ThreadWorkspaceService threadWorkspaceService) {
+    public UploadService(ThreadWorkspaceService threadWorkspaceService,
+                         DocumentMarkdownConversionService documentMarkdownConversionService) {
         this.threadWorkspaceService = threadWorkspaceService;
+        this.documentMarkdownConversionService = documentMarkdownConversionService;
     }
 
     public Mono<UploadRef> store(String threadId, FilePart filePart) {
@@ -28,7 +31,10 @@ public class UploadService {
         Path target = threadWorkspaceService.resolveRelativePath(threadId, WorkspaceArea.UPLOADS, sanitizedFilename);
 
         return filePart.transferTo(target)
-                .then(Mono.fromCallable(() -> toUploadRef(threadId, target)));
+                .then(Mono.fromCallable(() -> {
+                    Path markdownPath = documentMarkdownConversionService.convert(target).orElse(null);
+                    return toUploadRef(threadId, target, markdownPath);
+                }));
     }
 
     public List<UploadRef> listUploads(String threadId) {
@@ -40,8 +46,9 @@ public class UploadService {
 
         try (Stream<Path> paths = Files.walk(uploadsRoot)) {
             return paths.filter(Files::isRegularFile)
+                    .filter(path -> !documentMarkdownConversionService.isDerivedMarkdown(path))
                     .sorted(Comparator.naturalOrder())
-                    .map(path -> toUploadRef(threadId, path))
+                    .map(path -> toUploadRef(threadId, path, resolveMarkdownPath(path)))
                     .toList();
         }
         catch (IOException exception) {
@@ -52,10 +59,14 @@ public class UploadService {
     public void deleteUpload(String threadId, String filename) {
         String sanitizedFilename = sanitizeFilename(filename);
         Path target = threadWorkspaceService.resolveRelativePath(threadId, WorkspaceArea.UPLOADS, sanitizedFilename);
+        Path markdownPath = resolveMarkdownPath(target);
 
         try {
             if (!Files.deleteIfExists(target)) {
                 throw new UploadNotFoundException(threadId, sanitizedFilename);
+            }
+            if (markdownPath != null && !markdownPath.equals(target)) {
+                Files.deleteIfExists(markdownPath);
             }
         }
         catch (IOException exception) {
@@ -63,21 +74,22 @@ public class UploadService {
         }
     }
 
-    private UploadRef toUploadRef(String threadId, Path file) {
+    private UploadRef toUploadRef(String threadId, Path file, Path markdownPath) {
         String originalVirtualPath = threadWorkspaceService.toVirtualPath(threadId, file);
-        Path markdownCandidate = siblingMarkdown(file);
-        String markdownVirtualPath = Files.isRegularFile(markdownCandidate)
-                ? threadWorkspaceService.toVirtualPath(threadId, markdownCandidate)
+        String markdownVirtualPath = markdownPath != null && Files.isRegularFile(markdownPath)
+                ? threadWorkspaceService.toVirtualPath(threadId, markdownPath)
                 : null;
 
         return new UploadRef(file.getFileName().toString(), originalVirtualPath, markdownVirtualPath);
     }
 
-    private Path siblingMarkdown(Path file) {
-        String filename = file.getFileName().toString();
-        int extensionSeparator = filename.lastIndexOf('.');
-        String basename = extensionSeparator >= 0 ? filename.substring(0, extensionSeparator) : filename;
-        return file.resolveSibling(basename + ".md");
+    private Path resolveMarkdownPath(Path file) {
+        if (file.getFileName().toString().endsWith(".md")) {
+            return file;
+        }
+
+        Path markdownPath = documentMarkdownConversionService.siblingMarkdown(file);
+        return Files.isRegularFile(markdownPath) ? markdownPath : null;
     }
 
     private String sanitizeFilename(String filename) {

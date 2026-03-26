@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P2-06` Implement document-to-Markdown conversion.
-2. `P2-07` Implement `ArtifactService`.
-3. `P2-08` Integrate `SummarizationHook` and `TodoListInterceptor`.
-4. `P2-09` Implement the approval recovery path.
-5. `P2-10` Add platform API integration coverage.
+1. `P2-07` Implement `ArtifactService`.
+2. `P2-08` Integrate `SummarizationHook` and `TodoListInterceptor`.
+3. `P2-09` Implement the approval recovery path.
+4. `P2-10` Add platform API integration coverage.
+5. `P3-01` Implement `MemoryStore`.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 

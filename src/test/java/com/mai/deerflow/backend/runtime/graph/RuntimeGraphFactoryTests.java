@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
+import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceProperties;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
@@ -36,7 +37,10 @@ class RuntimeGraphFactoryTests {
         ThreadWorkspaceProperties properties = new ThreadWorkspaceProperties();
         properties.setBaseDir(tempDir.resolve("threads"));
         threadWorkspaceService = new ThreadWorkspaceService(properties);
-        runtimeGraphFactory = new RuntimeGraphFactory(threadWorkspaceService, new UploadService(threadWorkspaceService));
+        runtimeGraphFactory = new RuntimeGraphFactory(
+                threadWorkspaceService,
+                new UploadService(threadWorkspaceService, new DocumentMarkdownConversionService())
+        );
     }
 
     @Test

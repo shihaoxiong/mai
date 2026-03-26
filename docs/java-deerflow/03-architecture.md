@@ -151,6 +151,12 @@ flowchart LR
 - 管理 Agent 生成产物及元数据。
 - 为前端提供 HTTP 访问入口。
 
+当前骨架实现：
+
+- 已支持线程级上传、列表和删除。
+- 已支持为 `.txt/.md` 生成或复用 Markdown 视图。
+- 对 `pdf/ppt/pptx/xls/xlsx/doc/docx` 当前会生成可诊断的 Markdown 占位文件，后续可替换为真实解析器。
+
 ### 5.10 Config Module
 
 职责：
