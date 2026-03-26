@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P1-02` Implement `RuntimeGraphFactory`.
-2. `P1-03` Implement `LeadAgentFactory`.
-3. `P1-04` Implement runtime API v1.
-4. `P1-05` Implement `LocalProcessSandboxProvider`.
-5. `P1-06` Implement path-safety validation across runtime tools.
+1. `P1-04` Implement runtime API v1.
+2. `P1-05` Implement `LocalProcessSandboxProvider`.
+3. `P1-06` Implement path-safety validation across runtime tools.
+4. `P1-07` Implement the run-state machine.
+5. `P1-08` Add minimal runtime verification coverage.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 

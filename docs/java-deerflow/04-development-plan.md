@@ -66,7 +66,7 @@
   产出：`PrepareThread -> AssembleContext -> RunLeadAgent -> PersistArtifacts` 的基础图。
   完成标准：能完整跑通一次多步骤任务。
 
-- [ ] P1-03 实现 `LeadAgentFactory`
+- [x] P1-03 实现 `LeadAgentFactory`
   产出：统一创建 ReactAgent、绑定 tools、hooks、interceptors 的工厂。
   完成标准：主 Agent 初始化逻辑不散落在 Controller 中。
 
