@@ -12,6 +12,7 @@ import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
+import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -33,16 +34,19 @@ public class ThreadRuntimeService {
     private final RuntimeGraphFactory runtimeGraphFactory;
     private final LeadAgentFactory leadAgentFactory;
     private final ChatModel chatModel;
+    private final RunStateMachine runStateMachine;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
                                 RuntimeGraphFactory runtimeGraphFactory,
                                 LeadAgentFactory leadAgentFactory,
-                                ChatModel chatModel) {
+                                ChatModel chatModel,
+                                RunStateMachine runStateMachine) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
         this.chatModel = chatModel;
+        this.runStateMachine = runStateMachine;
     }
 
     public ThreadStateSnapshot createThread(String requestedThreadId) {
@@ -73,34 +77,56 @@ public class ThreadRuntimeService {
         }
 
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        ThreadStateSnapshot currentSnapshot = threadSnapshots.getOrDefault(threadId, idleSnapshot(workspace));
         String runId = UUID.randomUUID().toString();
         AsyncNodeActionWithConfig runLeadAgentNode = runLeadAgentNode();
 
-        Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
-                Map.of(
-                        RuntimeStateKeys.THREAD_ID, threadId,
-                        RuntimeStateKeys.RUN_ID, runId,
-                        RuntimeStateKeys.USER_INPUT, message
-                ),
-                RunnableConfig.builder().threadId(threadId).build()
-        );
+        ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING);
+        threadSnapshots.put(threadId, runningSnapshot);
 
-        OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
-        ThreadStateSnapshot snapshot = new ThreadStateSnapshot(
-                threadId,
-                runId,
-                RunStatus.COMPLETED,
-                workspace.toState(),
-                List.of(),
-                artifactsFrom(state),
-                List.of(),
-                new ApprovalState(null, ApprovalStatus.NONE, null),
-                suggestionsFrom(state),
-                titleFrom(state, message)
-        );
+        try {
+            Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
+                    Map.of(
+                            RuntimeStateKeys.THREAD_ID, threadId,
+                            RuntimeStateKeys.RUN_ID, runId,
+                            RuntimeStateKeys.USER_INPUT, message
+                    ),
+                    RunnableConfig.builder().threadId(threadId).build()
+            );
 
-        threadSnapshots.put(threadId, snapshot);
-        return snapshot;
+            OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
+            ThreadStateSnapshot snapshot = new ThreadStateSnapshot(
+                    threadId,
+                    runId,
+                    runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.COMPLETED),
+                    workspace.toState(),
+                    List.of(),
+                    artifactsFrom(state),
+                    List.of(),
+                    new ApprovalState(null, ApprovalStatus.NONE, null),
+                    suggestionsFrom(state),
+                    titleFrom(state, message)
+            );
+
+            threadSnapshots.put(threadId, snapshot);
+            return snapshot;
+        }
+        catch (RuntimeException exception) {
+            ThreadStateSnapshot failedSnapshot = new ThreadStateSnapshot(
+                    threadId,
+                    runId,
+                    runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.FAILED),
+                    workspace.toState(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    new ApprovalState(null, ApprovalStatus.NONE, null),
+                    List.of(),
+                    deriveTitle(message)
+            );
+            threadSnapshots.put(threadId, failedSnapshot);
+            throw exception;
+        }
     }
 
     public void deleteThread(String threadId) {
@@ -177,5 +203,20 @@ public class ThreadRuntimeService {
     private String deriveTitle(String message) {
         String normalized = message.trim();
         return normalized.length() <= 48 ? normalized : normalized.substring(0, 48);
+    }
+
+    private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot, String runId, RunStatus targetStatus) {
+        return new ThreadStateSnapshot(
+                snapshot.threadId(),
+                runId,
+                runStateMachine.transition(snapshot.runStatus(), targetStatus),
+                snapshot.workspace(),
+                snapshot.uploads(),
+                snapshot.artifacts(),
+                snapshot.todos(),
+                snapshot.approval(),
+                snapshot.suggestions(),
+                snapshot.title()
+        );
     }
 }
