@@ -150,7 +150,7 @@
   产出：子任务提交、状态跟踪、结果收集能力。
   完成标准：主 Agent 可通过 `task` 工具委派子任务。
 
-- [ ] P3-05 接入 `SupervisorAgent / ParallelAgent / SequentialAgent`
+- [x] P3-05 接入 `SupervisorAgent / ParallelAgent / SequentialAgent`
   产出：多 Agent 编排能力。
   完成标准：至少支持一个串行和一个并行编排场景。
 

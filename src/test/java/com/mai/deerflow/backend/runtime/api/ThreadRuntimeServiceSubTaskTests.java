@@ -46,7 +46,94 @@ class ThreadRuntimeServiceSubTaskTests {
     Path tempDir;
 
     @Test
-    void shouldAllowLeadAgentToDelegateThroughTaskTool() {
+    void shouldAllowLeadAgentToDelegateSequentialSubTaskThroughTaskTool() {
+        ThreadRuntimeServiceFixture fixture = fixture(new DelegatingChatModel(
+                "sequential",
+                List.of(
+                        new StepPlan("research", "research data", "research_result"),
+                        new StepPlan("review", "review findings", "review_result")
+                )
+        ));
+
+        String threadId = "subtask-thread-" + UUID.randomUUID();
+        try {
+            fixture.threadRuntimeService.createThread(threadId);
+            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(
+                    threadId,
+                    "delegate this work to a child task",
+                    false,
+                    null
+            );
+
+            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+            assertThat(fixture.subTaskExecutor.list(threadId))
+                    .singleElement()
+                    .satisfies(record -> {
+                        assertThat(record.status()).isEqualTo(SubTaskStatus.COMPLETED);
+                        assertThat(record.result()).contains("review_result");
+                    });
+
+            StepVerifier.create(fixture.threadEventService.stream(threadId)
+                            .take(4)
+                            .map(event -> event.data().eventType()))
+                    .expectNext(
+                            RunEventType.RUN_STARTED,
+                            RunEventType.SUBTASK_STARTED,
+                            RunEventType.SUBTASK_UPDATED,
+                            RunEventType.RUN_COMPLETED
+                    )
+                    .verifyComplete();
+        }
+        finally {
+            fixture.threadRuntimeService.deleteThread(threadId);
+        }
+    }
+
+    @Test
+    void shouldAllowLeadAgentToDelegateParallelSubTaskThroughTaskTool() {
+        ThreadRuntimeServiceFixture fixture = fixture(new DelegatingChatModel(
+                "parallel",
+                List.of(
+                        new StepPlan("collect", "collect bullets", "collect_result"),
+                        new StepPlan("risk", "extract risks", "risk_result")
+                )
+        ));
+
+        String threadId = "subtask-thread-" + UUID.randomUUID();
+        try {
+            fixture.threadRuntimeService.createThread(threadId);
+            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(
+                    threadId,
+                    "delegate this work to a child task",
+                    false,
+                    null
+            );
+
+            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+            assertThat(fixture.subTaskExecutor.list(threadId))
+                    .singleElement()
+                    .satisfies(record -> {
+                        assertThat(record.status()).isEqualTo(SubTaskStatus.COMPLETED);
+                        assertThat(record.result()).contains("collect_result").contains("risk_result");
+                    });
+
+            StepVerifier.create(fixture.threadEventService.stream(threadId)
+                            .take(4)
+                            .map(event -> event.data().eventType()))
+                    .expectNext(
+                            RunEventType.RUN_STARTED,
+                            RunEventType.SUBTASK_STARTED,
+                            RunEventType.SUBTASK_UPDATED,
+                            RunEventType.RUN_COMPLETED
+                    )
+                    .verifyComplete();
+        }
+        finally {
+            fixture.threadRuntimeService.deleteThread(threadId);
+        }
+    }
+
+    private ThreadRuntimeServiceFixture fixture(ChatModel chatModel) {
         ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
         workspaceProperties.setBaseDir(tempDir.resolve("threads"));
         ThreadWorkspaceService threadWorkspaceService = new ThreadWorkspaceService(workspaceProperties);
@@ -65,7 +152,6 @@ class ThreadRuntimeServiceSubTaskTests {
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
-        ChatModel chatModel = new SubTaskDelegatingChatModel();
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(fileMemoryStore, Runnable::run);
@@ -92,52 +178,53 @@ class ThreadRuntimeServiceSubTaskTests {
                 memoryExtractorJob,
                 subTaskExecutor
         );
-
-        String threadId = "subtask-thread-" + UUID.randomUUID();
-        try {
-            threadRuntimeService.createThread(threadId);
-            ThreadStateSnapshot snapshot = threadRuntimeService.runThread(
-                    threadId,
-                    "delegate this work to a child task",
-                    false,
-                    null
-            );
-
-            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
-            assertThat(subTaskExecutor.list(threadId))
-                    .singleElement()
-                    .satisfies(record -> {
-                        assertThat(record.status()).isEqualTo(SubTaskStatus.COMPLETED);
-                        assertThat(record.result()).contains("subtask_result=");
-                    });
-
-            StepVerifier.create(threadEventService.stream(threadId)
-                            .take(4)
-                            .map(event -> event.data().eventType()))
-                    .expectNext(
-                            RunEventType.RUN_STARTED,
-                            RunEventType.SUBTASK_STARTED,
-                            RunEventType.SUBTASK_UPDATED,
-                            RunEventType.RUN_COMPLETED
-                    )
-                    .verifyComplete();
-        }
-        finally {
-            threadRuntimeService.deleteThread(threadId);
-        }
+        return new ThreadRuntimeServiceFixture(threadRuntimeService, subTaskExecutor, threadEventService);
     }
 
-    private static final class SubTaskDelegatingChatModel implements ChatModel {
+    private record ThreadRuntimeServiceFixture(
+            ThreadRuntimeService threadRuntimeService,
+            SubTaskExecutor subTaskExecutor,
+            ThreadEventService threadEventService
+    ) {
+    }
+
+    private record StepPlan(String name, String prompt, String result) {
+    }
+
+    private static final class DelegatingChatModel implements ChatModel {
+
+        private final String mode;
+        private final List<StepPlan> stepPlans;
+
+        private DelegatingChatModel(String mode, List<StepPlan> stepPlans) {
+            this.mode = mode;
+            this.stepPlans = stepPlans;
+        }
 
         @Override
         public ChatResponse call(Prompt prompt) {
             List<Message> messages = prompt.getInstructions();
+            String joinedPrompt = messages.stream()
+                    .map(Message::getText)
+                    .reduce((left, right) -> left + "\n" + right)
+                    .orElse("");
             String latestUserMessage = messages.stream()
                     .filter(UserMessage.class::isInstance)
                     .map(UserMessage.class::cast)
                     .reduce((previous, current) -> current)
                     .map(UserMessage::getText)
                     .orElse("");
+
+            if (latestUserMessage.startsWith("Delegated subtask") && joinedPrompt.contains("Step instruction:")) {
+                for (int index = stepPlans.size() - 1; index >= 0; index--) {
+                    StepPlan stepPlan = stepPlans.get(index);
+                    if (joinedPrompt.contains("Step instruction: " + stepPlan.prompt())) {
+                        return new ChatResponse(List.of(new Generation(
+                                new AssistantMessage(stepPlan.result())
+                        )));
+                    }
+                }
+            }
 
             if (latestUserMessage.startsWith("Delegated subtask")) {
                 return new ChatResponse(List.of(new Generation(
@@ -157,9 +244,7 @@ class ThreadRuntimeServiceSubTaskTests {
                                 "call-task",
                                 "function",
                                 "task",
-                                """
-                                {"action":"submit","title":"delegate work","prompt":"Review delegated work and return a concise finding.","waitForCompletion":true}
-                                """
+                                buildToolArguments()
                         )))
                         .build();
                 return new ChatResponse(List.of(new Generation(toolCallMessage)));
@@ -167,6 +252,18 @@ class ThreadRuntimeServiceSubTaskTests {
 
             String toolResult = toolResponses.get(0).getResponses().get(0).responseData();
             return new ChatResponse(List.of(new Generation(new AssistantMessage("parent_observation=" + toolResult))));
+        }
+
+        private String buildToolArguments() {
+            String stepsJson = stepPlans.stream()
+                    .map(stepPlan -> """
+                            {"name":"%s","prompt":"%s"}
+                            """.formatted(stepPlan.name(), stepPlan.prompt()))
+                    .reduce((left, right) -> left + "," + right)
+                    .orElse("");
+            return """
+                    {"action":"submit","title":"delegate work","prompt":"Coordinate delegated work and aggregate the result.","mode":"%s","steps":[%s],"waitForCompletion":true}
+                    """.formatted(mode, stepsJson);
         }
     }
 }

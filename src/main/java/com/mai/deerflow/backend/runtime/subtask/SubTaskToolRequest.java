@@ -12,6 +12,8 @@ public record SubTaskToolRequest(
         String taskId,
         String title,
         String prompt,
+        String mode,
+        java.util.List<SubTaskStep> steps,
         Boolean waitForCompletion,
         Long timeoutMillis
 ) {

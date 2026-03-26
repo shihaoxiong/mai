@@ -225,6 +225,7 @@ flowchart TD
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
+- `SubTaskExecutor` 已接入 `SequentialAgent` 和 `ParallelAgent`，当前可在子任务层跑通一个串行和一个并行编排场景
 
 ## 7. 状态模型设计
 
@@ -411,6 +412,8 @@ DeerFlow 的 subagent 不是简单直接调用另一个 Agent，而是后台任�
 - 子任务状态会持久化到 `data/threads/{threadId}/metadata/subtasks/`。
 - `task` 工具当前支持 `submit` 和 `status` 两种动作；`submit` 可选择等待完成后直接返回结果。
 - 子任务开始与完成/失败会发出 `subtask.started` / `subtask.updated` 事件。
+- `task` 工具当前支持 `single / sequential / parallel` 三种模式，其中 `sequential` 基于 `SequentialAgent`，`parallel` 基于 `ParallelAgent`。
+- `SupervisorAgent / LlmRoutingAgent` 的运行时路由集成暂未启用，后续可在现有子任务框架上继续扩展。
 
 ## 12. 安全设计
 

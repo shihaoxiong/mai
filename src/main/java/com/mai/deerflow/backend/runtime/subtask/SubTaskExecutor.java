@@ -1,7 +1,10 @@
 package com.mai.deerflow.backend.runtime.subtask;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.agent.Agent;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.agent.flow.agent.ParallelAgent;
+import com.alibaba.cloud.ai.graph.agent.flow.agent.SequentialAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
@@ -11,6 +14,7 @@ import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
@@ -94,10 +98,24 @@ public class SubTaskExecutor {
      * 提交子任务并异步执行。
      */
     public SubTaskRecord submit(String threadId, String runId, String title, String instruction) {
+        return submit(threadId, runId, title, instruction, SubTaskOrchestrationMode.SINGLE, List.of());
+    }
+
+    /**
+     * 提交子任务并按指定编排模式异步执行。
+     */
+    public SubTaskRecord submit(String threadId,
+                                String runId,
+                                String title,
+                                String instruction,
+                                SubTaskOrchestrationMode mode,
+                                List<SubTaskStep> steps) {
         String normalizedThreadId = requireText(threadId, "threadId");
         String normalizedRunId = requireText(runId, "runId");
         String normalizedInstruction = requireText(instruction, "instruction");
         String normalizedTitle = hasText(title) ? title.trim() : abbreviate(normalizedInstruction, 48);
+        SubTaskOrchestrationMode normalizedMode = mode == null ? SubTaskOrchestrationMode.SINGLE : mode;
+        List<SubTaskStep> normalizedSteps = normalizeSteps(steps);
         String taskId = UUID.randomUUID().toString();
         String timestamp = Instant.now().toString();
 
@@ -107,6 +125,8 @@ public class SubTaskExecutor {
                 normalizedRunId,
                 normalizedTitle,
                 normalizedInstruction,
+                normalizedMode.name(),
+                normalizedSteps,
                 SubTaskStatus.PENDING,
                 null,
                 null,
@@ -185,7 +205,9 @@ public class SubTaskExecutor {
                 threadId,
                 runId,
                 request == null ? null : request.title(),
-                request == null ? null : request.prompt()
+                request == null ? null : request.prompt(),
+                parseMode(request == null ? null : request.mode()),
+                request == null ? null : request.steps()
         );
         boolean waitForCompletion = request != null && Boolean.TRUE.equals(request.waitForCompletion());
         if (!waitForCompletion) {
@@ -229,34 +251,16 @@ public class SubTaskExecutor {
         );
 
         try {
-            ReactAgent subTaskAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
-                    .name("runtime-subtask-agent")
-                    .instruction("You are a delegated subtask agent. Complete only the delegated task and return a concise useful result.")
-                    .saver(new MemorySaver())
-                    .releaseThread(false)
-                    .build());
-
-            AssistantMessage assistantMessage = subTaskAgent.call(
-                    """
-                    Delegated subtask
-                    Parent thread: %s
-                    Subtask title: %s
-                    Instruction:
-                    %s
-                    """.formatted(
-                            runningRecord.parentThreadId(),
-                            runningRecord.title(),
-                            runningRecord.instruction()
-                    ),
-                    RunnableConfig.builder()
-                            .threadId(subTaskThreadId(runningRecord.parentThreadId(), runningRecord.taskId()))
-                            .build()
-            );
+            String result = switch (parseMode(runningRecord.mode())) {
+                case SINGLE -> executeSingleAgentSubTask(runningRecord);
+                case SEQUENTIAL -> executeSequentialSubTask(runningRecord);
+                case PARALLEL -> executeParallelSubTask(runningRecord);
+            };
 
             SubTaskRecord completedRecord = withStatus(
                     runningRecord,
                     SubTaskStatus.COMPLETED,
-                    assistantMessage.getText(),
+                    result,
                     null
             );
             persistRecord(completedRecord);
@@ -304,6 +308,8 @@ public class SubTaskExecutor {
                 baseRecord.parentRunId(),
                 baseRecord.title(),
                 baseRecord.instruction(),
+                baseRecord.mode(),
+                baseRecord.steps(),
                 status,
                 result,
                 errorMessage,
@@ -351,11 +357,182 @@ public class SubTaskExecutor {
         return threadId + "::" + taskId;
     }
 
+    private String executeSingleAgentSubTask(SubTaskRecord record) throws Exception {
+        ReactAgent subTaskAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
+                .name("runtime-subtask-agent")
+                .instruction("You are a delegated subtask agent. Complete only the delegated task and return a concise useful result.")
+                .saver(new MemorySaver())
+                .releaseThread(false)
+                .build());
+
+        AssistantMessage assistantMessage = subTaskAgent.call(
+                subTaskPrompt(record),
+                RunnableConfig.builder()
+                        .threadId(subTaskThreadId(record.parentThreadId(), record.taskId()))
+                        .build()
+        );
+        return assistantMessage.getText();
+    }
+
+    private String executeSequentialSubTask(SubTaskRecord record) throws Exception {
+        List<SubTaskStep> steps = requireConfiguredSteps(record);
+        List<Agent> subAgents = buildFlowSubAgents(record, steps, "sequential-step");
+        SequentialAgent sequentialAgent = SequentialAgent.builder()
+                .name("runtime-sequential-subtask")
+                .description("Sequential multi-agent subtask orchestrator")
+                .subAgents(subAgents)
+                .executor(executor)
+                .build();
+
+        String lastStepKey = outputKeyForStep(normalizeStepName(steps.get(steps.size() - 1).name()));
+        String lastStepResult = sequentialAgent.invokeAndGetOutput(
+                        subTaskPrompt(record),
+                        RunnableConfig.builder()
+                                .threadId(subTaskThreadId(record.parentThreadId(), record.taskId()) + "-seq")
+                                .build()
+                )
+                .map(output -> readStateText(output.state(), lastStepKey))
+                .filter(this::hasText)
+                .orElse(null);
+        if (hasText(lastStepResult)) {
+            return lastStepResult;
+        }
+
+        return sequentialAgent.invoke(subTaskPrompt(record), RunnableConfig.builder()
+                        .threadId(subTaskThreadId(record.parentThreadId(), record.taskId()) + "-seq-fallback")
+                        .build())
+                .map(state -> collectStepOutputs(state, steps))
+                .filter(this::hasText)
+                .orElseThrow(() -> new IllegalStateException("Sequential agent returned no state"));
+    }
+
+    private String executeParallelSubTask(SubTaskRecord record) throws Exception {
+        List<SubTaskStep> steps = requireConfiguredSteps(record);
+        List<Agent> subAgents = buildFlowSubAgents(record, steps, "parallel-step");
+        ParallelAgent parallelAgent = ParallelAgent.builder()
+                .name("runtime-parallel-subtask")
+                .description("Parallel multi-agent subtask orchestrator")
+                .subAgents(subAgents)
+                .mergeOutputKey("parallelMerged")
+                .mergeStrategy(new ParallelAgent.ConcatenationMergeStrategy("\n"))
+                .maxConcurrency(steps.size())
+                .executor(executor)
+                .build();
+
+        return parallelAgent.invoke(subTaskPrompt(record), RunnableConfig.builder()
+                        .threadId(subTaskThreadId(record.parentThreadId(), record.taskId()) + "-par")
+                        .build())
+                .map(state -> state.value("parallelMerged", String.class)
+                        .orElseGet(() -> collectStepOutputs(state, steps)))
+                .orElseThrow(() -> new IllegalStateException("Parallel agent returned no state"));
+    }
+
+    private List<Agent> buildFlowSubAgents(SubTaskRecord record,
+                                           List<SubTaskStep> steps,
+                                           String namePrefix) {
+        return steps.stream()
+                .<Agent>map(step -> {
+                    String stepName = normalizeStepName(step.name());
+                    ReactAgent subAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
+                            .name(namePrefix + "-" + stepName)
+                            .instruction("""
+                                    You are a delegated subtask worker.
+                                    Step name: %s
+                                    Step instruction: %s
+                                    Use the incoming user message as the shared task context, and produce a concise result for this step.
+                                    """.formatted(
+                                    stepName,
+                                    step.prompt().trim()
+                            ))
+                            .saver(new MemorySaver())
+                            .releaseThread(false)
+                            .build());
+                    subAgent.setOutputKey(outputKeyForStep(stepName));
+                    return subAgent;
+                })
+                .toList();
+    }
+
+    private String collectStepOutputs(com.alibaba.cloud.ai.graph.OverAllState state, List<SubTaskStep> steps) {
+        return steps.stream()
+                .map(step -> readStateText(state, outputKeyForStep(normalizeStepName(step.name()))))
+                .filter(this::hasText)
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+    }
+
+    private String readStateText(com.alibaba.cloud.ai.graph.OverAllState state, String key) {
+        Object value = state.value(key).orElse(null);
+        if (value instanceof String text) {
+            return text;
+        }
+        if (value instanceof Message message) {
+            return message.getText();
+        }
+        if (value instanceof AssistantMessage assistantMessage) {
+            return assistantMessage.getText();
+        }
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private List<SubTaskStep> requireConfiguredSteps(SubTaskRecord record) {
+        List<SubTaskStep> steps = normalizeSteps(record.steps());
+        if (steps.isEmpty()) {
+            throw new IllegalArgumentException("steps must not be empty for mode " + record.mode());
+        }
+        return steps;
+    }
+
+    private List<SubTaskStep> normalizeSteps(List<SubTaskStep> steps) {
+        if (steps == null || steps.isEmpty()) {
+            return List.of();
+        }
+        return java.util.stream.IntStream.range(0, steps.size())
+                .mapToObj(index -> {
+                    SubTaskStep step = steps.get(index);
+                    String prompt = requireText(step == null ? null : step.prompt(), "steps[%d].prompt".formatted(index));
+                    String stepName = hasText(step.name()) ? step.name().trim() : "step-" + (index + 1);
+                    return new SubTaskStep(stepName, prompt);
+                })
+                .toList();
+    }
+
+    private SubTaskOrchestrationMode parseMode(String mode) {
+        if (!hasText(mode)) {
+            return SubTaskOrchestrationMode.SINGLE;
+        }
+        return SubTaskOrchestrationMode.valueOf(mode.trim().toUpperCase(Locale.ROOT));
+    }
+
     private String normalizeAction(String action) {
         if (!hasText(action)) {
             return "submit";
         }
         return action.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String subTaskPrompt(SubTaskRecord record) {
+        return """
+                Delegated subtask
+                Parent thread: %s
+                Subtask title: %s
+                Mode: %s
+                Instruction:
+                %s
+                """.formatted(
+                record.parentThreadId(),
+                record.title(),
+                record.mode(),
+                record.instruction()
+        );
+    }
+
+    private String normalizeStepName(String name) {
+        return hasText(name) ? name.trim() : "step";
+    }
+
+    private String outputKeyForStep(String stepName) {
+        return "subtask_" + stepName.replaceAll("[^a-zA-Z0-9_-]", "_");
     }
 
     private String requireText(String value, String fieldName) {
