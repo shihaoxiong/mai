@@ -16,7 +16,7 @@
 - SSE demo: `http://localhost:8080/api/p0/stream?threadId=demo-thread`
 - create thread: `POST /api/threads`
 - get thread: `GET /api/threads/{threadId}`
-- run thread: `POST /api/threads/{threadId}/runs`，请求体支持可选 `userId` 以启用长期记忆抽取
+- run thread: `POST /api/threads/{threadId}/runs`，请求体支持可选 `userId` 以启用长期记忆注入与抽取
 - delete thread: `DELETE /api/threads/{threadId}`
 - list models: `GET /api/models`
 - upload files: `POST /api/threads/{threadId}/uploads`

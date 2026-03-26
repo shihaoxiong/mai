@@ -11,6 +11,8 @@ import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.memory.MemoryFact;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryStore;
 import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
@@ -43,16 +45,21 @@ class ThreadRuntimeServiceMemoryTests {
         DocumentMarkdownConversionService documentMarkdownConversionService = new DocumentMarkdownConversionService();
         UploadService uploadService = new UploadService(threadWorkspaceService, documentMarkdownConversionService);
         ArtifactService artifactService = new ArtifactService(threadWorkspaceService);
-        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(threadWorkspaceService, uploadService, artifactService);
+        MemoryStoreProperties memoryStoreProperties = new MemoryStoreProperties();
+        memoryStoreProperties.setBaseDir(tempDir.resolve("memory-success"));
+        FileMemoryStore fileMemoryStore = new FileMemoryStore(memoryStoreProperties, new ObjectMapper());
+        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(
+                threadWorkspaceService,
+                uploadService,
+                artifactService,
+                new MemoryInjectionService(fileMemoryStore, new MemoryInjectionProperties())
+        );
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
         ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
-        MemoryStoreProperties memoryStoreProperties = new MemoryStoreProperties();
-        memoryStoreProperties.setBaseDir(tempDir.resolve("memory-success"));
-        FileMemoryStore fileMemoryStore = new FileMemoryStore(memoryStoreProperties, new ObjectMapper());
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(fileMemoryStore, Runnable::run);
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(
@@ -105,13 +112,6 @@ class ThreadRuntimeServiceMemoryTests {
         DocumentMarkdownConversionService documentMarkdownConversionService = new DocumentMarkdownConversionService();
         UploadService uploadService = new UploadService(threadWorkspaceService, documentMarkdownConversionService);
         ArtifactService artifactService = new ArtifactService(threadWorkspaceService);
-        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(threadWorkspaceService, uploadService, artifactService);
-        LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
-        RuntimeAgentEnhancementService runtimeAgentEnhancementService =
-                new RuntimeAgentEnhancementService(new ObjectMapper());
-        ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
-        RunStateMachine runStateMachine = new RunStateMachine();
-        ThreadEventService threadEventService = new ThreadEventService();
         MemoryStore failingMemoryStore = new MemoryStore() {
             @Override
             public List<MemoryFact> list(String userId, com.mai.deerflow.backend.runtime.memory.MemoryQuery query) {
@@ -128,6 +128,18 @@ class ThreadRuntimeServiceMemoryTests {
                 return false;
             }
         };
+        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(
+                threadWorkspaceService,
+                uploadService,
+                artifactService,
+                new MemoryInjectionService(failingMemoryStore, new MemoryInjectionProperties())
+        );
+        LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
+        RuntimeAgentEnhancementService runtimeAgentEnhancementService =
+                new RuntimeAgentEnhancementService(new ObjectMapper());
+        ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
+        RunStateMachine runStateMachine = new RunStateMachine();
+        ThreadEventService threadEventService = new ThreadEventService();
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(failingMemoryStore, Runnable::run);
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(

@@ -22,3 +22,8 @@ mai:
     file: data/runtime-config/runtime-config.json
   memory:
     base-dir: data/memory
+    injection:
+      enabled: true
+      max-facts: 3
+      min-confidence: 0.7
+      strategy: append-to-user-input

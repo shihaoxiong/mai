@@ -340,12 +340,17 @@ public class ThreadRuntimeService {
         threadEventService.emit(threadId, runId, RunEventType.RUN_STARTED, Map.of("status", RunStatus.RUNNING.name()));
 
         try {
+            Map<String, Object> initialState = new HashMap<>();
+            initialState.put(RuntimeStateKeys.THREAD_ID, threadId);
+            initialState.put(RuntimeStateKeys.RUN_ID, runId);
+            initialState.put(RuntimeStateKeys.USER_INPUT, message);
+            String userId = normalizeOptionalUserId(threadContext == null ? null : threadContext.userId());
+            if (userId != null) {
+                initialState.put(RuntimeStateKeys.USER_ID, userId);
+            }
+
             Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
-                    Map.of(
-                            RuntimeStateKeys.THREAD_ID, threadId,
-                            RuntimeStateKeys.RUN_ID, runId,
-                            RuntimeStateKeys.USER_INPUT, message
-                    ),
+                    initialState,
                     RunnableConfig.builder().threadId(threadId).build()
             );
 
@@ -417,21 +422,23 @@ public class ThreadRuntimeService {
          * 将 lead agent 封装成 graph 节点，便于外层继续统一处理状态和后处理。
          */
         return (state, config) -> {
-            String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
+            String rawUserInput = state.value(RuntimeStateKeys.USER_INPUT, "");
+            String agentInput = state.value(RuntimeStateKeys.AGENT_INPUT, String.class)
+                    .orElseGet(() -> state.value(RuntimeStateKeys.USER_INPUT, ""));
             String agentThreadId = "%s:%s".formatted(
                     state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead"),
                     state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run")
             );
             try {
                 RunnableConfig agentConfig = RunnableConfig.builder().threadId(agentThreadId).build();
-                AssistantMessage assistantMessage = leadAgent.call(userInput, agentConfig);
+                AssistantMessage assistantMessage = leadAgent.call(agentInput, agentConfig);
 
                 Map<String, Object> leadThreadState = Optional.ofNullable(
                         leadAgent.getCompiledGraph().getState(agentConfig)
                 ).map(snapshot -> snapshot.state().data()).orElse(Map.of());
 
                 Map<String, Object> updates = new HashMap<>();
-                updates.put(RuntimeStateKeys.TITLE, deriveTitle(userInput));
+                updates.put(RuntimeStateKeys.TITLE, deriveTitle(rawUserInput));
                 updates.put(RuntimeStateKeys.SUGGESTIONS, List.of("continue this thread"));
                 updates.put("assistantOutput", assistantMessage.getText());
                 updates.put("leadThreadState", leadThreadState);

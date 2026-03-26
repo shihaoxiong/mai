@@ -7,6 +7,11 @@ import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
+import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
+import com.mai.deerflow.backend.runtime.memory.MemoryFact;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
+import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceProperties;
@@ -32,16 +37,21 @@ class RuntimeGraphFactoryTests {
 
     private ThreadWorkspaceService threadWorkspaceService;
     private RuntimeGraphFactory runtimeGraphFactory;
+    private FileMemoryStore fileMemoryStore;
 
     @BeforeEach
     void setUp() {
         ThreadWorkspaceProperties properties = new ThreadWorkspaceProperties();
         properties.setBaseDir(tempDir.resolve("threads"));
         threadWorkspaceService = new ThreadWorkspaceService(properties);
+        MemoryStoreProperties memoryStoreProperties = new MemoryStoreProperties();
+        memoryStoreProperties.setBaseDir(tempDir.resolve("memory"));
+        fileMemoryStore = new FileMemoryStore(memoryStoreProperties, new com.fasterxml.jackson.databind.ObjectMapper());
         runtimeGraphFactory = new RuntimeGraphFactory(
                 threadWorkspaceService,
                 new UploadService(threadWorkspaceService, new DocumentMarkdownConversionService()),
-                new ArtifactService(threadWorkspaceService)
+                new ArtifactService(threadWorkspaceService),
+                new MemoryInjectionService(fileMemoryStore, new MemoryInjectionProperties())
         );
     }
 
@@ -87,6 +97,52 @@ class RuntimeGraphFactoryTests {
                 .contains(RuntimeGraphFactory.ASSEMBLE_CONTEXT_NODE)
                 .contains(RuntimeGraphFactory.RUN_LEAD_AGENT_NODE)
                 .contains(RuntimeGraphFactory.PERSIST_ARTIFACTS_NODE);
+    }
+
+    @Test
+    void shouldInjectMemoryContextIntoAssembledAgentInput() {
+        fileMemoryStore.save("graph-user", new MemoryFact(
+                null,
+                "preference",
+                "Keep comments in Chinese",
+                0.95d,
+                "thread-memory-a",
+                null,
+                null,
+                Map.of()
+        ));
+        fileMemoryStore.save("graph-user", new MemoryFact(
+                null,
+                "fact",
+                "Uses Java 17 locally",
+                0.81d,
+                "thread-memory-b",
+                null,
+                null,
+                Map.of()
+        ));
+
+        CompiledGraph compiledGraph = runtimeGraphFactory.create(stubLeadAgentNode(), new MemorySaver());
+
+        Optional<OverAllState> result = compiledGraph.invoke(
+                Map.of(
+                        RuntimeStateKeys.USER_INPUT, "continue the backend task",
+                        RuntimeStateKeys.USER_ID, "graph-user"
+                ),
+                RunnableConfig.builder().threadId("thread-memory").build()
+        );
+
+        assertThat(result).isPresent();
+        OverAllState state = result.orElseThrow();
+        assertThat(state.value(RuntimeStateKeys.MEMORY_CONTEXT, List.class)).hasValueSatisfying(memories -> {
+            List<?> refs = memories;
+            assertThat(refs).hasSize(2);
+        });
+        assertThat(state.value(RuntimeStateKeys.AGENT_INPUT, String.class))
+                .hasValueSatisfying(agentInput -> assertThat(agentInput)
+                        .contains("Keep comments in Chinese")
+                        .contains("Uses Java 17 locally")
+                        .contains("continue the backend task"));
     }
 
     private AsyncNodeActionWithConfig stubLeadAgentNode() {

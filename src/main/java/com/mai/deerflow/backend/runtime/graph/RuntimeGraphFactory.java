@@ -12,11 +12,11 @@ import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
-import com.mai.deerflow.backend.runtime.contract.WorkspaceState;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionResult;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
-import com.mai.deerflow.backend.runtime.workspace.WorkspaceArea;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -40,13 +40,16 @@ public class RuntimeGraphFactory {
     private final ThreadWorkspaceService threadWorkspaceService;
     private final UploadService uploadService;
     private final ArtifactService artifactService;
+    private final MemoryInjectionService memoryInjectionService;
 
     public RuntimeGraphFactory(ThreadWorkspaceService threadWorkspaceService,
                                UploadService uploadService,
-                               ArtifactService artifactService) {
+                               ArtifactService artifactService,
+                               MemoryInjectionService memoryInjectionService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.uploadService = uploadService;
         this.artifactService = artifactService;
+        this.memoryInjectionService = memoryInjectionService;
     }
 
     /**
@@ -107,11 +110,15 @@ public class RuntimeGraphFactory {
     private CompletableFuture<Map<String, Object>> assembleContextNode(OverAllState state, RunnableConfig config) {
         String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
         String threadId = resolveThreadId(state, config);
+        String userId = state.value(RuntimeStateKeys.USER_ID, String.class).orElse(null);
         List<UploadRef> uploads = uploadService.listUploads(threadId);
+        MemoryInjectionResult memoryInjectionResult = memoryInjectionService.inject(userId, userInput);
         return CompletableFuture.completedFuture(Map.of(
                 RuntimeStateKeys.CONTEXT_READY, true,
                 RuntimeStateKeys.USER_INPUT, userInput,
-                RuntimeStateKeys.UPLOADS, uploads
+                RuntimeStateKeys.AGENT_INPUT, memoryInjectionResult.effectiveUserInput(),
+                RuntimeStateKeys.UPLOADS, uploads,
+                RuntimeStateKeys.MEMORY_CONTEXT, memoryInjectionResult.memoryFacts()
         ));
     }
 
