@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: java-deerflow-backend
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+server:
+  shutdown: graceful
