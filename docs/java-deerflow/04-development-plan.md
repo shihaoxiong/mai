@@ -74,7 +74,7 @@
   产出：`POST /api/threads`、`POST /api/threads/{threadId}/runs`、`GET /api/threads/{threadId}`、`DELETE /api/threads/{threadId}`。
   完成标准：能创建线程、运行任务、查询状态、删除线程。
 
-- [ ] P1-05 实现 `LocalProcessSandboxProvider`
+- [x] P1-05 实现 `LocalProcessSandboxProvider`
   产出：本地命令执行、目录列举、文件读写、替换能力。
   完成标准：Agent 可在限定线程目录中完成基础文件操作。
 
