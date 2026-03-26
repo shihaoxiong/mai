@@ -306,8 +306,15 @@ flowchart TD
 推荐抽象：
 
 - `MemoryStore` 接口
-- 默认实现：基于 PostgreSQL 或 Redis 的 KV/JSON 存储
+- 默认实现：首版先提供 `FileMemoryStore`，使用本地 JSON 文件按用户维度持久化
+- 生产增强：可替换为 PostgreSQL 或 Redis 的 KV/JSON 存储
 - 后续增强：向量库检索、分层记忆、用户画像索引
+
+当前骨架实现：
+
+- 默认使用 `data/memory/` 作为长期记忆根目录。
+- 每个用户的长期记忆单独存成一个 JSON 文件，避免与 thread 工作区生命周期耦合。
+- 读取时先支持按 `limit` 和 `minConfidence` 做基础筛选，为后续注入策略复用。
 
 ### 9.3 文件与产物
 

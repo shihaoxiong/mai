@@ -20,3 +20,5 @@ mai:
     base-dir: data/threads
   runtime-config:
     file: data/runtime-config/runtime-config.json
+  memory:
+    base-dir: data/memory
