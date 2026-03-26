@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P2-10` Add platform API integration coverage.
-2. `P3-01` Implement `MemoryStore`.
-3. `P3-02` Implement `MemoryExtractorJob`.
-4. `P3-03` Implement memory injection strategy.
-5. `P3-04` Implement `SubTaskExecutor`.
+1. `P3-01` Implement `MemoryStore`.
+2. `P3-02` Implement `MemoryExtractorJob`.
+3. `P3-03` Implement memory injection strategy.
+4. `P3-04` Implement `SubTaskExecutor`.
+5. `P3-05` Integrate multi-agent orchestration.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 
