@@ -62,7 +62,7 @@
   产出：线程目录结构、创建/删除/解析能力。
   完成标准：自动生成 `workspace/uploads/outputs`，删除线程时能一并清理。
 
-- [ ] P1-02 实现 `RuntimeGraphFactory`
+- [x] P1-02 实现 `RuntimeGraphFactory`
   产出：`PrepareThread -> AssembleContext -> RunLeadAgent -> PersistArtifacts` 的基础图。
   完成标准：能完整跑通一次多步骤任务。
 

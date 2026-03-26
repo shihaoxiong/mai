@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P0-01` Initialize Spring Boot + Spring AI Alibaba + WebFlux project.
-2. `P0-02` Prove `ReactAgent + Graph + Checkpointer`.
-3. `P0-03` Prove SSE streaming.
-4. `P0-05` Freeze initial state model in code.
-5. `P1-01` Implement `ThreadWorkspaceService`.
+1. `P1-02` Implement `RuntimeGraphFactory`.
+2. `P1-03` Implement `LeadAgentFactory`.
+3. `P1-04` Implement runtime API v1.
+4. `P1-05` Implement `LocalProcessSandboxProvider`.
+5. `P1-06` Implement path-safety validation across runtime tools.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 
