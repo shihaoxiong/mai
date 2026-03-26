@@ -96,7 +96,7 @@
   产出：动态配置抽象和文件版实现。
   完成标准：模型、MCP、Skills 开关可脱离代码硬编码。
 
-- [ ] P2-02 实现 `ModelRegistryService`
+- [x] P2-02 实现 `ModelRegistryService`
   产出：模型注册、查询、能力标签定义。
   完成标准：`GET /api/models` 可返回模型列表与能力信息。
 

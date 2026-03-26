@@ -18,4 +18,5 @@
 - get thread: `GET /api/threads/{threadId}`
 - run thread: `POST /api/threads/{threadId}/runs`
 - delete thread: `DELETE /api/threads/{threadId}`
+- list models: `GET /api/models`
 - tests: `./mvnw test`
