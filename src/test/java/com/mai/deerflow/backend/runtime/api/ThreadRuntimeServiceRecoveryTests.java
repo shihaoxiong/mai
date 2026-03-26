@@ -2,6 +2,7 @@ package com.mai.deerflow.backend.runtime.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
+import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
@@ -32,6 +33,9 @@ class ThreadRuntimeServiceRecoveryTests {
     private LeadAgentFactory leadAgentFactory;
 
     @Autowired
+    private RuntimeAgentEnhancementService runtimeAgentEnhancementService;
+
+    @Autowired
     private ChatModel chatModel;
 
     @Autowired
@@ -55,6 +59,7 @@ class ThreadRuntimeServiceRecoveryTests {
                 threadWorkspaceService,
                 runtimeGraphFactory,
                 leadAgentFactory,
+                runtimeAgentEnhancementService,
                 chatModel,
                 runStateMachine,
                 objectMapper,

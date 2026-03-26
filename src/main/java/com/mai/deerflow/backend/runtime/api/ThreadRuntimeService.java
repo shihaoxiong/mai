@@ -5,12 +5,14 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
+import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
 import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
+import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
@@ -26,6 +28,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +43,7 @@ public class ThreadRuntimeService {
     private final ThreadWorkspaceService threadWorkspaceService;
     private final RuntimeGraphFactory runtimeGraphFactory;
     private final LeadAgentFactory leadAgentFactory;
+    private final RuntimeAgentEnhancementService runtimeAgentEnhancementService;
     private final ChatModel chatModel;
     private final RunStateMachine runStateMachine;
     private final ObjectMapper objectMapper;
@@ -50,6 +54,7 @@ public class ThreadRuntimeService {
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
                                 RuntimeGraphFactory runtimeGraphFactory,
                                 LeadAgentFactory leadAgentFactory,
+                                RuntimeAgentEnhancementService runtimeAgentEnhancementService,
                                 ChatModel chatModel,
                                 RunStateMachine runStateMachine,
                                 ObjectMapper objectMapper,
@@ -58,6 +63,7 @@ public class ThreadRuntimeService {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
+        this.runtimeAgentEnhancementService = runtimeAgentEnhancementService;
         this.chatModel = chatModel;
         this.runStateMachine = runStateMachine;
         this.objectMapper = objectMapper;
@@ -133,7 +139,7 @@ public class ThreadRuntimeService {
                     workspace.toState(),
                     currentUploads(threadId),
                     currentArtifacts(threadId),
-                    List.of(),
+                    extractTodosFromLeadState(state),
                     new ApprovalState(null, ApprovalStatus.NONE, null),
                     suggestionsFrom(state),
                     titleFrom(state, message)
@@ -189,18 +195,35 @@ public class ThreadRuntimeService {
         var leadAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
                 .name("runtime-lead-agent")
                 .instruction("You are the Java DeerFlow backend lead agent.")
+                .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
+                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .saver(new com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver())
                 .build());
 
         return (state, config) -> {
             String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
+            String agentThreadId = "%s:%s".formatted(
+                    state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead"),
+                    state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run")
+            );
             try {
-                AssistantMessage assistantMessage = leadAgent.call(userInput);
+                RunnableConfig agentConfig = RunnableConfig.builder().threadId(agentThreadId).build();
+                AssistantMessage assistantMessage = leadAgent.call(
+                        userInput,
+                        agentConfig
+                );
+                Map<String, Object> leadThreadState = leadAgent.getCompiledGraph()
+                        .getState(agentConfig)
+                        .state()
+                        .data();
 
-                return CompletableFuture.completedFuture(Map.of(
-                        RuntimeStateKeys.TITLE, deriveTitle(userInput),
-                        RuntimeStateKeys.SUGGESTIONS, List.of("continue this thread"),
-                        "assistantOutput", assistantMessage.getText()
-                ));
+                Map<String, Object> updates = new HashMap<>();
+                updates.put(RuntimeStateKeys.TITLE, deriveTitle(userInput));
+                updates.put(RuntimeStateKeys.SUGGESTIONS, List.of("continue this thread"));
+                updates.put("assistantOutput", assistantMessage.getText());
+                updates.put("leadThreadState", leadThreadState);
+
+                return CompletableFuture.completedFuture(updates);
             }
             catch (Exception exception) {
                 CompletableFuture<Map<String, Object>> failed = new CompletableFuture<>();
@@ -227,6 +250,18 @@ public class ThreadRuntimeService {
     private String deriveTitle(String message) {
         String normalized = message.trim();
         return normalized.length() <= 48 ? normalized : normalized.substring(0, 48);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<TodoItem> extractTodosFromLeadState(OverAllState state) {
+        if (state == null) {
+            return List.of();
+        }
+        Object leadThreadState = state.value("leadThreadState").orElse(Map.of());
+        if (leadThreadState instanceof Map<?, ?> leadStateMap) {
+            return runtimeAgentEnhancementService.extractTodos((Map<String, Object>) leadStateMap);
+        }
+        return List.of();
     }
 
     private ThreadStateSnapshot refreshThreadSnapshot(ThreadStateSnapshot snapshot) {

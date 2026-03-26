@@ -220,6 +220,11 @@ flowchart TD
 - Agent loop 内的行为，用 Hook/Interceptor。
 - 运行前后平台行为，用 Graph Node / Service。
 
+当前骨架实现：
+
+- Runtime lead agent 已接入 `SummarizationHook`
+- Runtime lead agent 已接入 `TodoListInterceptor`
+
 ## 7. 状态模型设计
 
 建议在 Spring AI Alibaba 的 Graph `State` 基础上扩展如下业务状态。

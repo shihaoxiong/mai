@@ -120,7 +120,7 @@
   产出：产物索引、元数据记录、下载与预览接口。
   完成标准：线程内生成的文件可通过 HTTP 访问。
 
-- [ ] P2-08 接入 `SummarizationHook` 与 `TodoListInterceptor`
+- [x] P2-08 接入 `SummarizationHook` 与 `TodoListInterceptor`
   产出：上下文压缩与任务规划能力。
   完成标准：复杂任务能输出待办列表，长上下文不会无限膨胀。
 
