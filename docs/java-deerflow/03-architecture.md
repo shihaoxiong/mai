@@ -315,6 +315,8 @@ flowchart TD
 - 默认使用 `data/memory/` 作为长期记忆根目录。
 - 每个用户的长期记忆单独存成一个 JSON 文件，避免与 thread 工作区生命周期耦合。
 - 读取时先支持按 `limit` 和 `minConfidence` 做基础筛选，为后续注入策略复用。
+- 已实现 `MemoryExtractorJob`，在 run 成功结束后异步调度启发式抽取。
+- 当前通过 `POST /api/threads/{threadId}/runs` 请求体中的可选 `userId` 绑定线程与用户；缺少 `userId` 时会跳过长期记忆抽取。
 
 ### 9.3 文件与产物
 

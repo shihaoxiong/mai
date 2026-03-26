@@ -57,7 +57,8 @@ public class ThreadRuntimeController {
                         threadId,
                         request.message(),
                         request.approvalRequired() != null && request.approvalRequired(),
-                        request.approvalReason()
+                        request.approvalReason(),
+                        request.userId()
                 ))
                 .subscribeOn(Schedulers.boundedElastic());
     }

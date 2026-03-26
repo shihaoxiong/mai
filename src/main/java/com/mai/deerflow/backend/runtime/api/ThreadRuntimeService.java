@@ -20,10 +20,14 @@ import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
+import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
+import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
@@ -49,6 +53,7 @@ import java.util.concurrent.ConcurrentMap;
 public class ThreadRuntimeService {
 
     private static final ApprovalState NO_APPROVAL = new ApprovalState(null, ApprovalStatus.NONE, null);
+    private static final Logger logger = LoggerFactory.getLogger(ThreadRuntimeService.class);
 
     private final ThreadWorkspaceService threadWorkspaceService;
     private final RuntimeGraphFactory runtimeGraphFactory;
@@ -60,6 +65,7 @@ public class ThreadRuntimeService {
     private final UploadService uploadService;
     private final ArtifactService artifactService;
     private final ThreadEventService threadEventService;
+    private final MemoryExtractorJob memoryExtractorJob;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -71,7 +77,8 @@ public class ThreadRuntimeService {
                                 ObjectMapper objectMapper,
                                 UploadService uploadService,
                                 ArtifactService artifactService,
-                                ThreadEventService threadEventService) {
+                                ThreadEventService threadEventService,
+                                MemoryExtractorJob memoryExtractorJob) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -82,6 +89,7 @@ public class ThreadRuntimeService {
         this.uploadService = uploadService;
         this.artifactService = artifactService;
         this.threadEventService = threadEventService;
+        this.memoryExtractorJob = memoryExtractorJob;
     }
 
     /**
@@ -143,11 +151,23 @@ public class ThreadRuntimeService {
                                          String message,
                                          boolean approvalRequired,
                                          String approvalReason) {
+        return runThread(threadId, message, approvalRequired, approvalReason, null);
+    }
+
+    /**
+     * 执行一次线程运行，并按需把线程绑定到某个 userId，供长期记忆抽取使用。
+     */
+    public ThreadStateSnapshot runThread(String threadId,
+                                         String message,
+                                         boolean approvalRequired,
+                                         String approvalReason,
+                                         String userId) {
         if (message == null || message.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
 
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        ThreadContextMetadata threadContext = resolveThreadContext(threadId, userId);
         ThreadStateSnapshot currentSnapshot = threadSnapshots.getOrDefault(threadId, idleSnapshot(workspace));
         String runId = UUID.randomUUID().toString();
 
@@ -155,7 +175,7 @@ public class ThreadRuntimeService {
             return createPendingApproval(threadId, runId, message, approvalReason, currentSnapshot, workspace);
         }
 
-        return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL);
+        return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL, threadContext);
     }
 
     /**
@@ -242,7 +262,8 @@ public class ThreadRuntimeService {
                 pendingApproval.message(),
                 pendingApproval.runId(),
                 currentSnapshot,
-                new ApprovalState(pendingApproval.approvalId(), ApprovalStatus.APPROVED, pendingApproval.comment())
+                new ApprovalState(pendingApproval.approvalId(), ApprovalStatus.APPROVED, pendingApproval.comment()),
+                resolveThreadContext(threadId, null)
         );
         deletePendingApproval(threadId);
         return resumedSnapshot;
@@ -308,7 +329,8 @@ public class ThreadRuntimeService {
                                            String message,
                                            String runId,
                                            ThreadStateSnapshot currentSnapshot,
-                                           ApprovalState approvalState) {
+                                           ApprovalState approvalState,
+                                           ThreadContextMetadata threadContext) {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         AsyncNodeActionWithConfig runLeadAgentNode = runLeadAgentNode();
 
@@ -343,6 +365,7 @@ public class ThreadRuntimeService {
 
             threadSnapshots.put(threadId, snapshot);
             persistSnapshot(snapshot);
+            scheduleMemoryExtraction(threadContext, state, snapshot, message);
             threadEventService.emit(threadId, runId, RunEventType.RUN_COMPLETED, snapshot);
             return snapshot;
         }
@@ -468,6 +491,40 @@ public class ThreadRuntimeService {
         );
     }
 
+    private void scheduleMemoryExtraction(ThreadContextMetadata threadContext,
+                                          OverAllState state,
+                                          ThreadStateSnapshot snapshot,
+                                          String message) {
+        String userId = normalizeOptionalUserId(threadContext == null ? null : threadContext.userId());
+        if (userId == null) {
+            return;
+        }
+
+        MemoryExtractionRequest request = new MemoryExtractionRequest(
+                userId,
+                snapshot.threadId(),
+                snapshot.runId(),
+                message,
+                assistantOutputFrom(state),
+                snapshot.title()
+        );
+
+        try {
+            CompletableFuture<?> future = memoryExtractorJob.schedule(request);
+            if (future != null) {
+                future.whenComplete((ignored, exception) -> {
+                    if (exception != null) {
+                        logger.warn("Memory extraction completed exceptionally for thread {}", snapshot.threadId(), exception);
+                    }
+                });
+            }
+            threadEventService.emit(snapshot.threadId(), snapshot.runId(), RunEventType.MEMORY_SCHEDULED, Map.of("userId", userId));
+        }
+        catch (RuntimeException exception) {
+            logger.warn("Failed to schedule memory extraction for thread {}", snapshot.threadId(), exception);
+        }
+    }
+
     private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot,
                                            String runId,
                                            RunStatus targetStatus,
@@ -492,6 +549,10 @@ public class ThreadRuntimeService {
 
     private List<ArtifactRef> currentArtifacts(String threadId) {
         return artifactService.listArtifacts(threadId);
+    }
+
+    private String assistantOutputFrom(OverAllState state) {
+        return state.value("assistantOutput", String.class).orElse("");
     }
 
     /**
@@ -574,6 +635,68 @@ public class ThreadRuntimeService {
         }
     }
 
+    private ThreadContextMetadata resolveThreadContext(String threadId, String requestedUserId) {
+        String normalizedRequestedUserId = normalizeOptionalUserId(requestedUserId);
+        Optional<ThreadContextMetadata> existingThreadContext = loadThreadContext(threadId);
+        if (existingThreadContext.isPresent()) {
+            String existingUserId = normalizeOptionalUserId(existingThreadContext.get().userId());
+            if (existingUserId != null) {
+                if (normalizedRequestedUserId != null && !existingUserId.equals(normalizedRequestedUserId)) {
+                    throw new ThreadContextConflictException(threadId, existingUserId, normalizedRequestedUserId);
+                }
+                return new ThreadContextMetadata(existingUserId);
+            }
+        }
+
+        if (normalizedRequestedUserId == null) {
+            return existingThreadContext.orElse(new ThreadContextMetadata(null));
+        }
+
+        ThreadContextMetadata resolvedThreadContext = new ThreadContextMetadata(normalizedRequestedUserId);
+        persistThreadContext(threadId, resolvedThreadContext);
+        return resolvedThreadContext;
+    }
+
+    private void persistThreadContext(String threadId, ThreadContextMetadata threadContext) {
+        if (threadContext == null || normalizeOptionalUserId(threadContext.userId()) == null) {
+            return;
+        }
+
+        Path threadContextFile = threadContextFile(threadId);
+        try {
+            Files.createDirectories(threadContextFile.getParent());
+            objectMapper.writeValue(threadContextFile.toFile(), threadContext);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to persist thread context for " + threadId, exception);
+        }
+    }
+
+    private Optional<ThreadContextMetadata> loadThreadContext(String threadId) {
+        if (!threadWorkspaceService.exists(threadId)) {
+            return Optional.empty();
+        }
+
+        Path threadContextFile = threadContextFile(threadId);
+        if (!Files.isRegularFile(threadContextFile)) {
+            return Optional.empty();
+        }
+
+        try {
+            return Optional.of(objectMapper.readValue(threadContextFile.toFile(), ThreadContextMetadata.class));
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to load thread context for " + threadId, exception);
+        }
+    }
+
+    private String normalizeOptionalUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return null;
+        }
+        return userId.trim();
+    }
+
     private Path snapshotFile(ThreadWorkspace workspace) {
         return workspace.threadRoot().resolve("metadata").resolve("thread-state.json");
     }
@@ -583,5 +706,12 @@ public class ThreadRuntimeService {
                 .threadRoot()
                 .resolve("metadata")
                 .resolve("pending-approval.json");
+    }
+
+    private Path threadContextFile(String threadId) {
+        return threadWorkspaceService.getOrCreateWorkspace(threadId)
+                .threadRoot()
+                .resolve("metadata")
+                .resolve("thread-context.json");
     }
 }
