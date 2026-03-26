@@ -46,6 +46,7 @@ Read these documents before making substantial design or implementation changes:
 - [docs/java-deerflow/02-requirements.md](./docs/java-deerflow/02-requirements.md)
 - [docs/java-deerflow/03-architecture.md](./docs/java-deerflow/03-architecture.md)
 - [docs/java-deerflow/04-development-plan.md](./docs/java-deerflow/04-development-plan.md)
+- [docs/java-deerflow/05-runtime-contract.md](./docs/java-deerflow/05-runtime-contract.md)
 
 External references used to shape the design:
 
@@ -183,5 +184,6 @@ Start with these files, in order:
 
 1. [docs/java-deerflow/04-development-plan.md](./docs/java-deerflow/04-development-plan.md)
 2. [docs/java-deerflow/02-requirements.md](./docs/java-deerflow/02-requirements.md)
-3. [docs/java-deerflow/03-architecture.md](./docs/java-deerflow/03-architecture.md)
-4. [docs/java-deerflow/01-analysis.md](./docs/java-deerflow/01-analysis.md)
+3. [docs/java-deerflow/05-runtime-contract.md](./docs/java-deerflow/05-runtime-contract.md)
+4. [docs/java-deerflow/03-architecture.md](./docs/java-deerflow/03-architecture.md)
+5. [docs/java-deerflow/01-analysis.md](./docs/java-deerflow/01-analysis.md)

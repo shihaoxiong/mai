@@ -6,6 +6,7 @@
 - [Java DeerFlow Backend 需求文档](docs/java-deerflow/02-requirements.md)
 - [Java DeerFlow Backend 架构设计](docs/java-deerflow/03-architecture.md)
 - [Java DeerFlow Backend 开发计划（Codex 任务列表版）](docs/java-deerflow/04-development-plan.md)
+- [Java DeerFlow Backend P0 运行时契约](docs/java-deerflow/05-runtime-contract.md)
 
 ## Run
 

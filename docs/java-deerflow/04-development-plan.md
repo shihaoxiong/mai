@@ -44,15 +44,15 @@
   产出：最小流式接口和事件模型草案。
   完成标准：前端或 curl 能连续接收到 token/event 流。
 
-- [ ] P0-04 验证本地工具与一个 MCP 工具接入
+- [x] P0-04 验证本地工具与一个 MCP 工具接入
   产出：本地 tool demo、MCP tool demo、统一 tool 注册方式。
   完成标准：Lead Agent 能同时调用一个 built-in tool 和一个 MCP tool。
 
-- [ ] P0-05 冻结首版状态模型
+- [x] P0-05 冻结首版状态模型
   产出：`thread/run/messages/workspace/uploads/artifacts/todos/approval` 等核心状态定义。
   完成标准：架构文档和代码中的状态模型一致。
 
-- [ ] P0-06 冻结首版 API 与 SSE 事件协议
+- [x] P0-06 冻结首版 API 与 SSE 事件协议
   产出：接口清单、事件名称、基础 payload 结构。
   完成标准：后续 P1 之前不再大改主接口前缀和核心事件名。
 
@@ -207,7 +207,7 @@
 - [x] P0-01 初始化 Spring Boot + Spring AI Alibaba + WebFlux 工程
 - [x] P0-02 跑通 `ReactAgent + Graph + Checkpointer` 最小样例
 - [x] P0-03 跑通 SSE 输出链路
-- [ ] P0-05 冻结首版状态模型
+- [x] P0-05 冻结首版状态模型
 - [ ] P1-01 实现 `ThreadWorkspaceService`
 
 这 5 个任务做完后，项目会从“设计阶段”进入“可执行雏形阶段”。
