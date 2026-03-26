@@ -24,4 +24,7 @@
 - delete upload: `DELETE /api/threads/{threadId}/uploads/{filename}`
 - list artifacts: `GET /api/threads/{threadId}/artifacts/list`
 - read artifact: `GET /api/threads/{threadId}/artifacts/{artifactPath}`
+- stream events: `GET /api/threads/{threadId}/events`
+- submit approval: `POST /api/threads/{threadId}/approvals/{approvalId}`
+- resume thread: `POST /api/threads/{threadId}/resume`
 - tests: `./mvnw test`

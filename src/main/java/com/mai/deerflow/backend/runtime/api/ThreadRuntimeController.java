@@ -39,7 +39,27 @@ public class ThreadRuntimeController {
 
     @PostMapping("/{threadId}/runs")
     public Mono<ThreadStateSnapshot> runThread(@PathVariable String threadId, @RequestBody ThreadRunRequest request) {
-        return Mono.fromCallable(() -> threadRuntimeService.runThread(threadId, request.message()))
+        return Mono.fromCallable(() -> threadRuntimeService.runThread(
+                        threadId,
+                        request.message(),
+                        request.approvalRequired() != null && request.approvalRequired(),
+                        request.approvalReason()
+                ))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @PostMapping("/{threadId}/approvals/{approvalId}")
+    public Mono<ThreadStateSnapshot> submitApproval(@PathVariable String threadId,
+                                                    @PathVariable String approvalId,
+                                                    @RequestBody ApprovalSubmissionRequest request) {
+        return Mono.fromCallable(() -> threadRuntimeService.submitApproval(threadId, approvalId, request))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @PostMapping("/{threadId}/resume")
+    public Mono<ThreadStateSnapshot> resumeThread(@PathVariable String threadId,
+                                                  @RequestBody(required = false) ResumeThreadRequest request) {
+        return Mono.fromCallable(() -> threadRuntimeService.resumeThread(threadId, request))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 

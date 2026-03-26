@@ -262,6 +262,7 @@ flowchart TD
 - `GET /api/threads/{threadId}/state`
 - `POST /api/threads/{threadId}/resume`
 - `POST /api/threads/{threadId}/approvals/{approvalId}`
+- `GET /api/threads/{threadId}/events`
 
 如果明确要兼容 DeerFlow 现有前端，也可以增加兼容路由：
 
@@ -366,6 +367,11 @@ ${app.data-dir}/threads/{threadId}/
 - `memory.scheduled`
 - `run.completed`
 - `run.failed`
+
+当前骨架实现：
+
+- 已支持基于 replay sink 的线程事件流
+- 已在审批等待、运行开始、运行完成、运行失败时发出事件
 
 事件载荷要求：
 

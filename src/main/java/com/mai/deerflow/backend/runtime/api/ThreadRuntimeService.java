@@ -3,6 +3,8 @@ package com.mai.deerflow.backend.runtime.api;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
+import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
@@ -10,17 +12,18 @@ import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
 import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
+import com.mai.deerflow.backend.runtime.contract.RunEventType;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
+import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
@@ -40,6 +43,8 @@ import java.util.concurrent.ConcurrentMap;
 @Service
 public class ThreadRuntimeService {
 
+    private static final ApprovalState NO_APPROVAL = new ApprovalState(null, ApprovalStatus.NONE, null);
+
     private final ThreadWorkspaceService threadWorkspaceService;
     private final RuntimeGraphFactory runtimeGraphFactory;
     private final LeadAgentFactory leadAgentFactory;
@@ -49,6 +54,7 @@ public class ThreadRuntimeService {
     private final ObjectMapper objectMapper;
     private final UploadService uploadService;
     private final ArtifactService artifactService;
+    private final ThreadEventService threadEventService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -59,7 +65,8 @@ public class ThreadRuntimeService {
                                 RunStateMachine runStateMachine,
                                 ObjectMapper objectMapper,
                                 UploadService uploadService,
-                                ArtifactService artifactService) {
+                                ArtifactService artifactService,
+                                ThreadEventService threadEventService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -69,6 +76,7 @@ public class ThreadRuntimeService {
         this.objectMapper = objectMapper;
         this.uploadService = uploadService;
         this.artifactService = artifactService;
+        this.threadEventService = threadEventService;
     }
 
     public ThreadStateSnapshot createThread(String requestedThreadId) {
@@ -91,6 +99,7 @@ public class ThreadRuntimeService {
             persistSnapshot(refreshedSnapshot);
             return refreshedSnapshot;
         }
+
         ThreadStateSnapshot persistedSnapshot = loadSnapshot(threadId).orElse(null);
         if (persistedSnapshot != null) {
             ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(persistedSnapshot);
@@ -98,9 +107,11 @@ public class ThreadRuntimeService {
             persistSnapshot(refreshedSnapshot);
             return refreshedSnapshot;
         }
+
         if (!threadWorkspaceService.exists(threadId)) {
             throw new ThreadNotFoundException(threadId);
         }
+
         ThreadStateSnapshot recoveredIdleSnapshot = idleSnapshot(threadWorkspaceService.getWorkspace(threadId));
         threadSnapshots.put(threadId, recoveredIdleSnapshot);
         persistSnapshot(recoveredIdleSnapshot);
@@ -108,6 +119,13 @@ public class ThreadRuntimeService {
     }
 
     public ThreadStateSnapshot runThread(String threadId, String message) {
+        return runThread(threadId, message, false, null);
+    }
+
+    public ThreadStateSnapshot runThread(String threadId,
+                                         String message,
+                                         boolean approvalRequired,
+                                         String approvalReason) {
         if (message == null || message.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
@@ -115,11 +133,160 @@ public class ThreadRuntimeService {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         ThreadStateSnapshot currentSnapshot = threadSnapshots.getOrDefault(threadId, idleSnapshot(workspace));
         String runId = UUID.randomUUID().toString();
+
+        if (approvalRequired) {
+            return createPendingApproval(threadId, runId, message, approvalReason, currentSnapshot, workspace);
+        }
+
+        return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL);
+    }
+
+    public ThreadStateSnapshot submitApproval(String threadId, String approvalId, ApprovalSubmissionRequest request) {
+        PendingApproval pendingApproval = loadPendingApproval(threadId)
+                .orElseThrow(() -> new ApprovalOperationException("No pending approval exists for thread " + threadId));
+
+        if (!pendingApproval.approvalId().equals(approvalId)) {
+            throw new ApprovalOperationException("Approval id does not match pending approval for thread " + threadId);
+        }
+
+        ApprovalDecision decision = request == null ? null : request.decision();
+        if (decision == null) {
+            throw new ApprovalOperationException("Approval decision must not be null");
+        }
+
+        ThreadStateSnapshot currentSnapshot = getThread(threadId);
+
+        if (decision == ApprovalDecision.REJECT) {
+            deletePendingApproval(threadId);
+
+            ThreadStateSnapshot rejectedSnapshot = new ThreadStateSnapshot(
+                    threadId,
+                    pendingApproval.runId(),
+                    runStateMachine.transition(currentSnapshot.runStatus(), RunStatus.FAILED),
+                    currentSnapshot.workspace(),
+                    currentUploads(threadId),
+                    currentArtifacts(threadId),
+                    currentSnapshot.todos(),
+                    new ApprovalState(approvalId, ApprovalStatus.REJECTED, request.comment()),
+                    currentSnapshot.suggestions(),
+                    currentSnapshot.title()
+            );
+            threadSnapshots.put(threadId, rejectedSnapshot);
+            persistSnapshot(rejectedSnapshot);
+            threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.RUN_FAILED, rejectedSnapshot.approval());
+            return rejectedSnapshot;
+        }
+
+        PendingApproval approvedApproval = new PendingApproval(
+                pendingApproval.threadId(),
+                pendingApproval.runId(),
+                pendingApproval.approvalId(),
+                pendingApproval.message(),
+                pendingApproval.reason(),
+                ApprovalStatus.APPROVED,
+                request.comment()
+        );
+        persistPendingApproval(approvedApproval);
+
+        ThreadStateSnapshot approvedSnapshot = new ThreadStateSnapshot(
+                threadId,
+                pendingApproval.runId(),
+                currentSnapshot.runStatus(),
+                currentSnapshot.workspace(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                currentSnapshot.todos(),
+                new ApprovalState(approvalId, ApprovalStatus.APPROVED, request.comment()),
+                currentSnapshot.suggestions(),
+                currentSnapshot.title()
+        );
+        threadSnapshots.put(threadId, approvedSnapshot);
+        persistSnapshot(approvedSnapshot);
+        return approvedSnapshot;
+    }
+
+    public ThreadStateSnapshot resumeThread(String threadId, ResumeThreadRequest request) {
+        PendingApproval pendingApproval = loadPendingApproval(threadId)
+                .orElseThrow(() -> new ApprovalOperationException("No pending approval exists for thread " + threadId));
+
+        if (pendingApproval.status() != ApprovalStatus.APPROVED) {
+            throw new ApprovalOperationException("Pending approval must be approved before resume");
+        }
+
+        ThreadStateSnapshot currentSnapshot = getThread(threadId);
+        ThreadStateSnapshot resumedSnapshot = executeRun(
+                threadId,
+                pendingApproval.message(),
+                pendingApproval.runId(),
+                currentSnapshot,
+                new ApprovalState(pendingApproval.approvalId(), ApprovalStatus.APPROVED, pendingApproval.comment())
+        );
+        deletePendingApproval(threadId);
+        return resumedSnapshot;
+    }
+
+    public void deleteThread(String threadId) {
+        if (!threadWorkspaceService.exists(threadId) && !threadSnapshots.containsKey(threadId)) {
+            throw new ThreadNotFoundException(threadId);
+        }
+        threadSnapshots.remove(threadId);
+        deletePendingApproval(threadId);
+        threadWorkspaceService.deleteWorkspace(threadId);
+    }
+
+    private ThreadStateSnapshot createPendingApproval(String threadId,
+                                                      String runId,
+                                                      String message,
+                                                      String approvalReason,
+                                                      ThreadStateSnapshot currentSnapshot,
+                                                      ThreadWorkspace workspace) {
+        String approvalId = UUID.randomUUID().toString();
+        String reason = approvalReason == null || approvalReason.isBlank()
+                ? "Manual approval required"
+                : approvalReason;
+
+        PendingApproval pendingApproval = new PendingApproval(
+                threadId,
+                runId,
+                approvalId,
+                message,
+                reason,
+                ApprovalStatus.WAITING,
+                null
+        );
+
+        ThreadStateSnapshot waitingSnapshot = new ThreadStateSnapshot(
+                threadId,
+                runId,
+                runStateMachine.transition(currentSnapshot.runStatus(), RunStatus.WAITING_APPROVAL),
+                workspace.toState(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                currentSnapshot.todos(),
+                new ApprovalState(approvalId, ApprovalStatus.WAITING, reason),
+                currentSnapshot.suggestions(),
+                currentSnapshot.title()
+        );
+
+        threadSnapshots.put(threadId, waitingSnapshot);
+        persistSnapshot(waitingSnapshot);
+        persistPendingApproval(pendingApproval);
+        threadEventService.emit(threadId, runId, RunEventType.APPROVAL_REQUIRED, waitingSnapshot.approval());
+        return waitingSnapshot;
+    }
+
+    private ThreadStateSnapshot executeRun(String threadId,
+                                           String message,
+                                           String runId,
+                                           ThreadStateSnapshot currentSnapshot,
+                                           ApprovalState approvalState) {
+        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         AsyncNodeActionWithConfig runLeadAgentNode = runLeadAgentNode();
 
-        ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING);
+        ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING, approvalState);
         threadSnapshots.put(threadId, runningSnapshot);
         persistSnapshot(runningSnapshot);
+        threadEventService.emit(threadId, runId, RunEventType.RUN_STARTED, Map.of("status", RunStatus.RUNNING.name()));
 
         try {
             Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
@@ -140,13 +307,14 @@ public class ThreadRuntimeService {
                     currentUploads(threadId),
                     currentArtifacts(threadId),
                     extractTodosFromLeadState(state),
-                    new ApprovalState(null, ApprovalStatus.NONE, null),
+                    approvalState,
                     suggestionsFrom(state),
                     titleFrom(state, message)
             );
 
             threadSnapshots.put(threadId, snapshot);
             persistSnapshot(snapshot);
+            threadEventService.emit(threadId, runId, RunEventType.RUN_COMPLETED, snapshot);
             return snapshot;
         }
         catch (RuntimeException exception) {
@@ -158,22 +326,15 @@ public class ThreadRuntimeService {
                     currentUploads(threadId),
                     List.of(),
                     List.of(),
-                    new ApprovalState(null, ApprovalStatus.NONE, null),
+                    approvalState,
                     List.of(),
                     deriveTitle(message)
             );
             threadSnapshots.put(threadId, failedSnapshot);
             persistSnapshot(failedSnapshot);
+            threadEventService.emit(threadId, runId, RunEventType.RUN_FAILED, Map.of("message", String.valueOf(exception.getMessage())));
             throw exception;
         }
-    }
-
-    public void deleteThread(String threadId) {
-        if (!threadWorkspaceService.exists(threadId) && !threadSnapshots.containsKey(threadId)) {
-            throw new ThreadNotFoundException(threadId);
-        }
-        threadSnapshots.remove(threadId);
-        threadWorkspaceService.deleteWorkspace(threadId);
     }
 
     private ThreadStateSnapshot idleSnapshot(ThreadWorkspace workspace) {
@@ -185,7 +346,7 @@ public class ThreadRuntimeService {
                 currentUploads(workspace.threadId()),
                 currentArtifacts(workspace.threadId()),
                 List.of(),
-                new ApprovalState(null, ApprovalStatus.NONE, null),
+                NO_APPROVAL,
                 List.of(),
                 null
         );
@@ -197,7 +358,7 @@ public class ThreadRuntimeService {
                 .instruction("You are the Java DeerFlow backend lead agent.")
                 .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
                 .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
-                .saver(new com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver())
+                .saver(new MemorySaver())
                 .build());
 
         return (state, config) -> {
@@ -208,21 +369,17 @@ public class ThreadRuntimeService {
             );
             try {
                 RunnableConfig agentConfig = RunnableConfig.builder().threadId(agentThreadId).build();
-                AssistantMessage assistantMessage = leadAgent.call(
-                        userInput,
-                        agentConfig
-                );
-                Map<String, Object> leadThreadState = leadAgent.getCompiledGraph()
-                        .getState(agentConfig)
-                        .state()
-                        .data();
+                AssistantMessage assistantMessage = leadAgent.call(userInput, agentConfig);
+
+                Map<String, Object> leadThreadState = Optional.ofNullable(
+                        leadAgent.getCompiledGraph().getState(agentConfig)
+                ).map(snapshot -> snapshot.state().data()).orElse(Map.of());
 
                 Map<String, Object> updates = new HashMap<>();
                 updates.put(RuntimeStateKeys.TITLE, deriveTitle(userInput));
                 updates.put(RuntimeStateKeys.SUGGESTIONS, List.of("continue this thread"));
                 updates.put("assistantOutput", assistantMessage.getText());
                 updates.put("leadThreadState", leadThreadState);
-
                 return CompletableFuture.completedFuture(updates);
             }
             catch (Exception exception) {
@@ -279,7 +436,10 @@ public class ThreadRuntimeService {
         );
     }
 
-    private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot, String runId, RunStatus targetStatus) {
+    private ThreadStateSnapshot withStatus(ThreadStateSnapshot snapshot,
+                                           String runId,
+                                           RunStatus targetStatus,
+                                           ApprovalState approvalState) {
         return new ThreadStateSnapshot(
                 snapshot.threadId(),
                 runId,
@@ -288,7 +448,7 @@ public class ThreadRuntimeService {
                 currentUploads(snapshot.threadId()),
                 currentArtifacts(snapshot.threadId()),
                 snapshot.todos(),
-                snapshot.approval(),
+                approvalState,
                 snapshot.suggestions(),
                 snapshot.title()
         );
@@ -333,7 +493,48 @@ public class ThreadRuntimeService {
         }
     }
 
+    private void persistPendingApproval(PendingApproval pendingApproval) {
+        Path approvalFile = pendingApprovalFile(pendingApproval.threadId());
+        try {
+            Files.createDirectories(approvalFile.getParent());
+            objectMapper.writeValue(approvalFile.toFile(), pendingApproval);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to persist pending approval for thread " + pendingApproval.threadId(), exception);
+        }
+    }
+
+    private Optional<PendingApproval> loadPendingApproval(String threadId) {
+        Path approvalFile = pendingApprovalFile(threadId);
+        if (!Files.isRegularFile(approvalFile)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(objectMapper.readValue(approvalFile.toFile(), PendingApproval.class));
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to load pending approval for thread " + threadId, exception);
+        }
+    }
+
+    private void deletePendingApproval(String threadId) {
+        Path approvalFile = pendingApprovalFile(threadId);
+        try {
+            Files.deleteIfExists(approvalFile);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to delete pending approval for thread " + threadId, exception);
+        }
+    }
+
     private Path snapshotFile(ThreadWorkspace workspace) {
         return workspace.threadRoot().resolve("metadata").resolve("thread-state.json");
+    }
+
+    private Path pendingApprovalFile(String threadId) {
+        return threadWorkspaceService.getOrCreateWorkspace(threadId)
+                .threadRoot()
+                .resolve("metadata")
+                .resolve("pending-approval.json");
     }
 }

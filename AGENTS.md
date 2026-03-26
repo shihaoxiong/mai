@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P2-09` Implement the approval recovery path.
-2. `P2-10` Add platform API integration coverage.
-3. `P3-01` Implement `MemoryStore`.
-4. `P3-02` Implement `MemoryExtractorJob`.
-5. `P3-03` Implement memory injection strategy.
+1. `P2-10` Add platform API integration coverage.
+2. `P3-01` Implement `MemoryStore`.
+3. `P3-02` Implement `MemoryExtractorJob`.
+4. `P3-03` Implement memory injection strategy.
+5. `P3-04` Implement `SubTaskExecutor`.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 

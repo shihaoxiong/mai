@@ -13,7 +13,7 @@ public class RunStateMachine {
     private final Map<RunStatus, EnumSet<RunStatus>> transitions = new EnumMap<>(RunStatus.class);
 
     public RunStateMachine() {
-        transitions.put(RunStatus.IDLE, EnumSet.of(RunStatus.RUNNING));
+        transitions.put(RunStatus.IDLE, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));
         transitions.put(RunStatus.RUNNING, EnumSet.of(
                 RunStatus.COMPLETED,
                 RunStatus.FAILED,
@@ -22,8 +22,8 @@ public class RunStateMachine {
         ));
         transitions.put(RunStatus.WAITING_APPROVAL, EnumSet.of(RunStatus.RUNNING, RunStatus.FAILED));
         transitions.put(RunStatus.WAITING_CLARIFICATION, EnumSet.of(RunStatus.RUNNING, RunStatus.FAILED));
-        transitions.put(RunStatus.COMPLETED, EnumSet.of(RunStatus.RUNNING));
-        transitions.put(RunStatus.FAILED, EnumSet.of(RunStatus.RUNNING));
+        transitions.put(RunStatus.COMPLETED, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));
+        transitions.put(RunStatus.FAILED, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));
     }
 
     public RunStatus transition(RunStatus current, RunStatus target) {

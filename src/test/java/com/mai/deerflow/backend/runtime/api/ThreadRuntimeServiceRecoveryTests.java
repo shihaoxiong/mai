@@ -5,6 +5,7 @@ import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
+import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
@@ -50,6 +51,9 @@ class ThreadRuntimeServiceRecoveryTests {
     @Autowired
     private ArtifactService artifactService;
 
+    @Autowired
+    private ThreadEventService threadEventService;
+
     @Test
     void shouldRecoverThreadSnapshotFromWorkspaceMetadata() {
         threadRuntimeService.createThread("recovery-thread");
@@ -64,7 +68,8 @@ class ThreadRuntimeServiceRecoveryTests {
                 runStateMachine,
                 objectMapper,
                 uploadService,
-                artifactService
+                artifactService,
+                threadEventService
         );
 
         ThreadStateSnapshot recoveredSnapshot = recoveredService.getThread("recovery-thread");
