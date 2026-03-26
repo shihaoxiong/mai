@@ -1,5 +1,6 @@
 package com.mai.deerflow.backend.runtime.sandbox;
 
+import com.mai.deerflow.backend.runtime.workspace.InvalidWorkspacePathException;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceProperties;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import com.mai.deerflow.backend.runtime.workspace.WorkspaceArea;
@@ -72,5 +73,27 @@ class LocalProcessSandboxProviderTests {
                 "found"
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("target text not found");
+    }
+
+    @Test
+    void shouldRejectEscapingWorkingDirectoryForCommandExecution() {
+        assertThatThrownBy(() -> sandboxProvider.execute(new CommandExecutionRequest(
+                "sandbox-thread",
+                WorkspaceArea.WORKSPACE,
+                "../outside",
+                List.of("/bin/sh", "-lc", "pwd"),
+                Duration.ofSeconds(5)
+        ))).isInstanceOf(InvalidWorkspacePathException.class)
+                .hasMessageContaining("escapes");
+    }
+
+    @Test
+    void shouldRejectEscapingFileAccess() {
+        assertThatThrownBy(() -> sandboxProvider.readFile(
+                "sandbox-thread",
+                WorkspaceArea.UPLOADS,
+                "../workspace/secret.txt"
+        )).isInstanceOf(InvalidWorkspacePathException.class)
+                .hasMessageContaining("escapes");
     }
 }

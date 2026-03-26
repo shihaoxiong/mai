@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P1-06` Implement path-safety validation across runtime tools.
-2. `P1-07` Implement the run-state machine.
-3. `P1-08` Add minimal runtime verification coverage.
-4. `P2-01` Implement `RuntimeConfigRepository`.
-5. `P2-02` Implement `ModelRegistryService`.
+1. `P1-07` Implement the run-state machine.
+2. `P1-08` Add minimal runtime verification coverage.
+3. `P2-01` Implement `RuntimeConfigRepository`.
+4. `P2-02` Implement `ModelRegistryService`.
+5. `P2-03` Implement `McpConfigService`.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 
