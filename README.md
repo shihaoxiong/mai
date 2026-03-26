@@ -14,4 +14,8 @@
 - `./mvnw spring-boot:run`
 - health check: `http://localhost:8080/actuator/health`
 - SSE demo: `http://localhost:8080/api/p0/stream?threadId=demo-thread`
+- create thread: `POST /api/threads`
+- get thread: `GET /api/threads/{threadId}`
+- run thread: `POST /api/threads/{threadId}/runs`
+- delete thread: `DELETE /api/threads/{threadId}`
 - tests: `./mvnw test`

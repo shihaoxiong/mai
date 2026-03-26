@@ -70,7 +70,7 @@
   产出：统一创建 ReactAgent、绑定 tools、hooks、interceptors 的工厂。
   完成标准：主 Agent 初始化逻辑不散落在 Controller 中。
 
-- [ ] P1-04 实现 Runtime API 第一版
+- [x] P1-04 实现 Runtime API 第一版
   产出：`POST /api/threads`、`POST /api/threads/{threadId}/runs`、`GET /api/threads/{threadId}`、`DELETE /api/threads/{threadId}`。
   完成标准：能创建线程、运行任务、查询状态、删除线程。
 
