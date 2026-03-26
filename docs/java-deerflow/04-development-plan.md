@@ -58,7 +58,7 @@
 
 ### P1：核心运行时
 
-- [ ] P1-01 实现 `ThreadWorkspaceService`
+- [x] P1-01 实现 `ThreadWorkspaceService`
   产出：线程目录结构、创建/删除/解析能力。
   完成标准：自动生成 `workspace/uploads/outputs`，删除线程时能一并清理。
 

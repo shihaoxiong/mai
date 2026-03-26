@@ -313,6 +313,11 @@ ${app.data-dir}/threads/{threadId}/
   metadata/
 ```
 
+当前骨架实现：
+
+- 默认使用 `data/threads/{threadId}/` 作为线程工作区根目录。
+- 通过 `mai.workspace.base-dir` 配置工作区根目录。
+
 ### 9.4 动态配置
 
 推荐抽象：

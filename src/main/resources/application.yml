@@ -14,3 +14,7 @@ management:
 
 server:
   shutdown: graceful
+
+mai:
+  workspace:
+    base-dir: data/threads
