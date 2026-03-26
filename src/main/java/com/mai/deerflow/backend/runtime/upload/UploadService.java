@@ -15,6 +15,11 @@ import java.util.List;
 import java.util.stream.Stream;
 
 @Service
+/**
+ * 线程上传文件管理服务。
+ *
+ * 负责上传落盘、列表、删除，以及上传后 Markdown 派生文件的生成与感知。
+ */
 public class UploadService {
 
     private final ThreadWorkspaceService threadWorkspaceService;
@@ -26,6 +31,9 @@ public class UploadService {
         this.documentMarkdownConversionService = documentMarkdownConversionService;
     }
 
+    /**
+     * 保存单个上传文件，并尽可能生成 Markdown 派生文件。
+     */
     public Mono<UploadRef> store(String threadId, FilePart filePart) {
         String sanitizedFilename = sanitizeFilename(filePart.filename());
         Path target = threadWorkspaceService.resolveRelativePath(threadId, WorkspaceArea.UPLOADS, sanitizedFilename);
@@ -56,6 +64,9 @@ public class UploadService {
         }
     }
 
+    /**
+     * 删除上传文件；若存在派生 Markdown，也会一并删除。
+     */
     public void deleteUpload(String threadId, String filename) {
         String sanitizedFilename = sanitizeFilename(filename);
         Path target = threadWorkspaceService.resolveRelativePath(threadId, WorkspaceArea.UPLOADS, sanitizedFilename);

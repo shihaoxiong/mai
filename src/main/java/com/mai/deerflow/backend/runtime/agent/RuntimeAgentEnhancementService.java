@@ -19,6 +19,14 @@ import java.util.List;
 import java.util.Map;
 
 @Component
+/**
+ * 统一封装 runtime 默认使用的 agent 增强能力。
+ *
+ * 当前主要负责：
+ * 1. 构造摘要 hook
+ * 2. 构造 todo 拦截器
+ * 3. 从 lead agent 的内部状态里提取待办与消息文本
+ */
 public class RuntimeAgentEnhancementService {
 
     private static final String WRITE_TODOS_TOOL_NAME = "write_todos";
@@ -29,14 +37,23 @@ public class RuntimeAgentEnhancementService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 返回 runtime lead agent 默认启用的 hook 列表。
+     */
     public List<Hook> defaultHooks(ChatModel model) {
         return List.of(summarizationHook(model, 4_000, 6, "Conversation summary:\n"));
     }
 
+    /**
+     * 返回 runtime lead agent 默认启用的 interceptor 列表。
+     */
     public List<Interceptor> defaultInterceptors() {
         return List.of(TodoListInterceptor.builder().build());
     }
 
+    /**
+     * 创建摘要 hook。
+     */
     public SummarizationHook summarizationHook(ChatModel model,
                                                int maxTokensBeforeSummary,
                                                int messagesToKeep,
@@ -51,6 +68,9 @@ public class RuntimeAgentEnhancementService {
                 .build();
     }
 
+    /**
+     * 从 agent 内部线程状态中提取最近一次 `write_todos` 工具调用结果。
+     */
     public List<TodoItem> extractTodos(Map<String, Object> threadState) {
         if (threadState == null) {
             return List.of();
@@ -68,6 +88,9 @@ public class RuntimeAgentEnhancementService {
         return List.of();
     }
 
+    /**
+     * 提取线程状态里可见的消息文本，主要用于验证摘要 hook 是否生效。
+     */
     public List<String> extractMessageTexts(Map<String, Object> threadState) {
         if (threadState == null) {
             return List.of();

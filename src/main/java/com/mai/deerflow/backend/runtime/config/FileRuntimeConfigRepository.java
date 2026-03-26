@@ -14,6 +14,11 @@ import java.util.Map;
 import java.util.Optional;
 
 @Repository
+/**
+ * 基于单个 JSON 文件的动态配置仓库实现。
+ *
+ * 这是当前阶段最轻量的配置持久化方案，便于后续平滑替换成 JDBC 或配置中心版本。
+ */
 public class FileRuntimeConfigRepository implements RuntimeConfigRepository {
 
     private static final TypeReference<LinkedHashMap<String, JsonNode>> STORE_TYPE = new TypeReference<>() {

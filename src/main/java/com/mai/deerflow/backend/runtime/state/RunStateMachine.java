@@ -8,6 +8,11 @@ import java.util.EnumSet;
 import java.util.Map;
 
 @Component
+/**
+ * 平台侧 run 状态流转规则。
+ *
+ * 通过集中管理合法迁移，避免状态变更逻辑散落在 service/controller 中。
+ */
 public class RunStateMachine {
 
     private final Map<RunStatus, EnumSet<RunStatus>> transitions = new EnumMap<>(RunStatus.class);
@@ -26,6 +31,9 @@ public class RunStateMachine {
         transitions.put(RunStatus.FAILED, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));
     }
 
+    /**
+     * 校验并执行一次状态迁移。
+     */
     public RunStatus transition(RunStatus current, RunStatus target) {
         if (current == target) {
             return target;

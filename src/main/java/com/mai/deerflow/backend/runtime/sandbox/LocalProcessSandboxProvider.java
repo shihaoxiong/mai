@@ -13,6 +13,11 @@ import java.util.Comparator;
 import java.util.List;
 
 @Component
+/**
+ * 本地进程版 sandbox。
+ *
+ * 主要面向开发与测试环境，依赖线程工作区保证路径边界。
+ */
 public class LocalProcessSandboxProvider implements SandboxProvider {
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
@@ -24,6 +29,9 @@ public class LocalProcessSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    /**
+     * 在本地子进程中执行命令，并应用基础超时控制。
+     */
     public CommandExecutionResult execute(CommandExecutionRequest request) {
         if (request.command() == null || request.command().isEmpty()) {
             throw new IllegalArgumentException("command must not be empty");
@@ -64,6 +72,9 @@ public class LocalProcessSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    /**
+     * 列出指定线程目录中的子项。
+     */
     public List<String> listDirectory(String threadId, WorkspaceArea area, String directoryPath) {
         Path directory = threadWorkspaceService.resolveRelativePath(threadId, area, directoryPath);
         try {
@@ -83,6 +94,9 @@ public class LocalProcessSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    /**
+     * 读取线程目录中的文件。
+     */
     public String readFile(String threadId, WorkspaceArea area, String filePath) {
         Path file = threadWorkspaceService.resolveRelativePath(threadId, area, filePath);
         try {
@@ -94,6 +108,9 @@ public class LocalProcessSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    /**
+     * 写入线程目录中的文件。
+     */
     public void writeFile(String threadId, WorkspaceArea area, String filePath, String content) {
         Path file = threadWorkspaceService.resolveRelativePath(threadId, area, filePath);
         try {
@@ -108,6 +125,9 @@ public class LocalProcessSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    /**
+     * 在文件中执行文本替换；若目标不存在则直接报错。
+     */
     public void replaceInFile(String threadId, WorkspaceArea area, String filePath, String target, String replacement) {
         String original = readFile(threadId, area, filePath);
         if (!original.contains(target)) {

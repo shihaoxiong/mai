@@ -10,6 +10,12 @@ import org.springframework.ai.tool.ToolCallback;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Lead Agent 的装配定义。
+ *
+ * 通过把模型、工具、hook、interceptor 和持久化配置收敛到一个对象中，
+ * 避免各处直接操作 `ReactAgent.builder()`。
+ */
 public record LeadAgentDefinition(
         String name,
         String description,
@@ -30,6 +36,9 @@ public record LeadAgentDefinition(
         interceptors = List.copyOf(interceptors);
     }
 
+    /**
+     * 以必需的 `ChatModel` 为起点创建定义构造器。
+     */
     public static Builder builder(ChatModel model) {
         return new Builder(model);
     }

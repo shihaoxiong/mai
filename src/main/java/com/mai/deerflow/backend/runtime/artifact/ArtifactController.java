@@ -19,6 +19,9 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/threads/{threadId}/artifacts")
+/**
+ * 线程产物 HTTP 访问入口。
+ */
 public class ArtifactController {
 
     private final ArtifactService artifactService;
@@ -27,12 +30,18 @@ public class ArtifactController {
         this.artifactService = artifactService;
     }
 
+    /**
+     * 列出线程当前可见的产物元数据。
+     */
     @GetMapping("/list")
     public Mono<List<ArtifactRef>> listArtifacts(@PathVariable String threadId) {
         return Mono.fromCallable(() -> artifactService.listArtifacts(threadId))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 读取或下载线程中的单个产物。
+     */
     @GetMapping("/{*artifactPath}")
     public Mono<ResponseEntity<Resource>> getArtifact(@PathVariable String threadId,
                                                       @PathVariable String artifactPath,

@@ -13,6 +13,11 @@ class SkillRegistryControllerTests {
 
     @Test
     void shouldListAndToggleSkill() {
+        webTestClient.post()
+                .uri("/api/skills/analysis/disable")
+                .exchange()
+                .expectStatus().isOk();
+
         webTestClient.get()
                 .uri("/api/skills")
                 .exchange()

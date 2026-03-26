@@ -15,6 +15,11 @@ import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/threads")
+/**
+ * 线程运行时 API 的第一版控制器。
+ *
+ * 当前覆盖线程创建、查询、执行、审批、恢复和删除。
+ */
 public class ThreadRuntimeController {
 
     private final ThreadRuntimeService threadRuntimeService;
@@ -23,6 +28,9 @@ public class ThreadRuntimeController {
         this.threadRuntimeService = threadRuntimeService;
     }
 
+    /**
+     * 创建线程；若请求中未提供 threadId，则自动生成。
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<ThreadStateSnapshot> createThread(@RequestBody(required = false) ThreadCreateRequest request) {
@@ -31,12 +39,18 @@ public class ThreadRuntimeController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 查询线程当前聚合状态。
+     */
     @GetMapping("/{threadId}")
     public Mono<ThreadStateSnapshot> getThread(@PathVariable String threadId) {
         return Mono.fromCallable(() -> threadRuntimeService.getThread(threadId))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 发起一次新的线程运行。
+     */
     @PostMapping("/{threadId}/runs")
     public Mono<ThreadStateSnapshot> runThread(@PathVariable String threadId, @RequestBody ThreadRunRequest request) {
         return Mono.fromCallable(() -> threadRuntimeService.runThread(
@@ -48,6 +62,9 @@ public class ThreadRuntimeController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 提交审批结果。
+     */
     @PostMapping("/{threadId}/approvals/{approvalId}")
     public Mono<ThreadStateSnapshot> submitApproval(@PathVariable String threadId,
                                                     @PathVariable String approvalId,
@@ -56,6 +73,9 @@ public class ThreadRuntimeController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 在审批通过后恢复线程执行。
+     */
     @PostMapping("/{threadId}/resume")
     public Mono<ThreadStateSnapshot> resumeThread(@PathVariable String threadId,
                                                   @RequestBody(required = false) ResumeThreadRequest request) {
@@ -63,6 +83,9 @@ public class ThreadRuntimeController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 删除线程及其本地工作区。
+     */
     @DeleteMapping("/{threadId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public Mono<Void> deleteThread(@PathVariable String threadId) {

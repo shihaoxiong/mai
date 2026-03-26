@@ -9,6 +9,14 @@ import java.util.Optional;
 import java.util.Set;
 
 @Service
+/**
+ * 上传文档到 Markdown 视图的转换服务。
+ *
+ * 当前先实现一条可扩展的基线：
+ * - 文本类文件直接生成 Markdown 副本
+ * - Markdown 文件直接复用
+ * - Office/PDF 类文件生成占位 Markdown，便于后续替换成真实解析器
+ */
 public class DocumentMarkdownConversionService {
 
     private static final Set<String> PLAIN_TEXT_EXTENSIONS = Set.of(
@@ -19,6 +27,9 @@ public class DocumentMarkdownConversionService {
             "pdf", "ppt", "pptx", "xls", "xlsx", "doc", "docx"
     );
 
+    /**
+     * 将原始文件转换为 Markdown 文件；无法处理时返回空。
+     */
     public Optional<Path> convert(Path sourceFile) {
         String extension = extensionOf(sourceFile);
 

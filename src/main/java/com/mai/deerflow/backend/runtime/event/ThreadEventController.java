@@ -11,6 +11,9 @@ import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/api/threads/{threadId}/events")
+/**
+ * 线程事件流 SSE 接口。
+ */
 public class ThreadEventController {
 
     private final ThreadEventService threadEventService;
@@ -19,6 +22,9 @@ public class ThreadEventController {
         this.threadEventService = threadEventService;
     }
 
+    /**
+     * 建立线程事件流订阅。
+     */
     @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<RunEventEnvelope<Object>>> stream(@PathVariable String threadId) {
         return threadEventService.stream(threadId);

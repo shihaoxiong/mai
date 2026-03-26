@@ -14,6 +14,11 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 @Service
+/**
+ * 线程产物管理服务。
+ *
+ * 产物来源于 `outputs` 目录，服务负责把目录中的实际文件转换成对外可用的元数据和内容视图。
+ */
 public class ArtifactService {
 
     private final ThreadWorkspaceService threadWorkspaceService;
@@ -22,6 +27,9 @@ public class ArtifactService {
         this.threadWorkspaceService = threadWorkspaceService;
     }
 
+    /**
+     * 列出线程当前 outputs 目录下的全部产物。
+     */
     public List<ArtifactRef> listArtifacts(String threadId) {
         Path outputsRoot = threadWorkspaceService.getOrCreateWorkspace(threadId).outputsRoot();
         if (!Files.isDirectory(outputsRoot)) {
@@ -43,6 +51,9 @@ public class ArtifactService {
         }
     }
 
+    /**
+     * 按相对路径读取单个产物内容元数据。
+     */
     public ArtifactContent getArtifact(String threadId, String artifactPath) {
         Path resolved = threadWorkspaceService.resolveRelativePath(threadId, WorkspaceArea.OUTPUTS, normalizeArtifactPath(artifactPath));
         if (!Files.isRegularFile(resolved)) {

@@ -41,6 +41,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 @Service
+/**
+ * 线程运行时的核心编排服务。
+ *
+ * 负责把线程工作区、runtime graph、lead agent、审批恢复、事件流和快照持久化串成一条完整主链路。
+ */
 public class ThreadRuntimeService {
 
     private static final ApprovalState NO_APPROVAL = new ApprovalState(null, ApprovalStatus.NONE, null);
@@ -79,6 +84,9 @@ public class ThreadRuntimeService {
         this.threadEventService = threadEventService;
     }
 
+    /**
+     * 创建线程并写入初始快照。
+     */
     public ThreadStateSnapshot createThread(String requestedThreadId) {
         String threadId = requestedThreadId == null || requestedThreadId.isBlank()
                 ? UUID.randomUUID().toString()
@@ -91,6 +99,9 @@ public class ThreadRuntimeService {
         return snapshot;
     }
 
+    /**
+     * 获取线程当前状态；若内存中不存在，则尝试从磁盘快照恢复。
+     */
     public ThreadStateSnapshot getThread(String threadId) {
         ThreadStateSnapshot snapshot = threadSnapshots.get(threadId);
         if (snapshot != null) {
@@ -118,10 +129,16 @@ public class ThreadRuntimeService {
         return recoveredIdleSnapshot;
     }
 
+    /**
+     * 以默认无需审批的方式执行一次线程运行。
+     */
     public ThreadStateSnapshot runThread(String threadId, String message) {
         return runThread(threadId, message, false, null);
     }
 
+    /**
+     * 执行一次线程运行，并支持在进入真正执行前挂起审批。
+     */
     public ThreadStateSnapshot runThread(String threadId,
                                          String message,
                                          boolean approvalRequired,
@@ -141,6 +158,9 @@ public class ThreadRuntimeService {
         return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL);
     }
 
+    /**
+     * 提交审批结果。
+     */
     public ThreadStateSnapshot submitApproval(String threadId, String approvalId, ApprovalSubmissionRequest request) {
         PendingApproval pendingApproval = loadPendingApproval(threadId)
                 .orElseThrow(() -> new ApprovalOperationException("No pending approval exists for thread " + threadId));
@@ -205,6 +225,9 @@ public class ThreadRuntimeService {
         return approvedSnapshot;
     }
 
+    /**
+     * 在审批已通过的前提下恢复线程执行。
+     */
     public ThreadStateSnapshot resumeThread(String threadId, ResumeThreadRequest request) {
         PendingApproval pendingApproval = loadPendingApproval(threadId)
                 .orElseThrow(() -> new ApprovalOperationException("No pending approval exists for thread " + threadId));
@@ -225,6 +248,9 @@ public class ThreadRuntimeService {
         return resumedSnapshot;
     }
 
+    /**
+     * 删除线程及其工作区，同时清理待审批文件。
+     */
     public void deleteThread(String threadId) {
         if (!threadWorkspaceService.exists(threadId) && !threadSnapshots.containsKey(threadId)) {
             throw new ThreadNotFoundException(threadId);
@@ -275,6 +301,9 @@ public class ThreadRuntimeService {
         return waitingSnapshot;
     }
 
+    /**
+     * 执行真正的 runtime graph 主链路。
+     */
     private ThreadStateSnapshot executeRun(String threadId,
                                            String message,
                                            String runId,
@@ -361,6 +390,9 @@ public class ThreadRuntimeService {
                 .saver(new MemorySaver())
                 .build());
 
+        /**
+         * 将 lead agent 封装成 graph 节点，便于外层继续统一处理状态和后处理。
+         */
         return (state, config) -> {
             String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
             String agentThreadId = "%s:%s".formatted(
@@ -462,6 +494,9 @@ public class ThreadRuntimeService {
         return artifactService.listArtifacts(threadId);
     }
 
+    /**
+     * 将线程快照写入 metadata 目录，供恢复链路读取。
+     */
     private void persistSnapshot(ThreadStateSnapshot snapshot) {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(snapshot.threadId());
         Path snapshotFile = snapshotFile(workspace);
@@ -475,6 +510,9 @@ public class ThreadRuntimeService {
         }
     }
 
+    /**
+     * 从 metadata 中恢复线程快照。
+     */
     private Optional<ThreadStateSnapshot> loadSnapshot(String threadId) {
         if (!threadWorkspaceService.exists(threadId)) {
             return Optional.empty();
@@ -493,6 +531,9 @@ public class ThreadRuntimeService {
         }
     }
 
+    /**
+     * 持久化待审批上下文，供审批提交和恢复执行使用。
+     */
     private void persistPendingApproval(PendingApproval pendingApproval) {
         Path approvalFile = pendingApprovalFile(pendingApproval.threadId());
         try {
@@ -504,6 +545,9 @@ public class ThreadRuntimeService {
         }
     }
 
+    /**
+     * 读取线程当前待审批信息。
+     */
     private Optional<PendingApproval> loadPendingApproval(String threadId) {
         Path approvalFile = pendingApprovalFile(threadId);
         if (!Files.isRegularFile(approvalFile)) {
@@ -517,6 +561,9 @@ public class ThreadRuntimeService {
         }
     }
 
+    /**
+     * 删除待审批持久化文件。
+     */
     private void deletePendingApproval(String threadId) {
         Path approvalFile = pendingApprovalFile(threadId);
         try {

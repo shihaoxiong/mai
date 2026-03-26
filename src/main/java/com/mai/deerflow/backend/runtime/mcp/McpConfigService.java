@@ -7,6 +7,11 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 @Service
+/**
+ * MCP 配置服务。
+ *
+ * 当前只负责配置层的查询和替换，真正的 MCP 连接生命周期后续再接入。
+ */
 public class McpConfigService {
 
     static final String MCP_CONFIG_KEY = "mcp.servers";
@@ -20,6 +25,9 @@ public class McpConfigService {
         this.runtimeConfigRepository = runtimeConfigRepository;
     }
 
+    /**
+     * 列出当前保存的 MCP Server 配置。
+     */
     public List<McpServerConfig> listServers() {
         return runtimeConfigRepository.find(MCP_CONFIG_KEY, MCP_CONFIG_LIST_TYPE)
                 .orElseGet(List::of);

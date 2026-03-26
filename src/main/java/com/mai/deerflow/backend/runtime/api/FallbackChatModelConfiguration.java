@@ -14,10 +14,16 @@ import org.springframework.ai.chat.prompt.Prompt;
 import java.util.List;
 
 @Configuration
+/**
+ * 在没有外部模型 Bean 时提供一个可运行的回退聊天模型。
+ */
 public class FallbackChatModelConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(ChatModel.class)
+    /**
+     * 构造最小回退模型，保证本地开发和测试链路可运行。
+     */
     ChatModel fallbackChatModel() {
         return new ChatModel() {
             @Override

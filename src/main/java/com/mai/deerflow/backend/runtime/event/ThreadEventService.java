@@ -11,14 +11,25 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+/**
+ * 线程事件流服务。
+ *
+ * 当前基于 replay sink 提供短历史回放，便于前端重新订阅时看到最近关键事件。
+ */
 public class ThreadEventService {
 
     private final Map<String, Sinks.Many<RunEventEnvelope<Object>>> sinks = new ConcurrentHashMap<>();
 
+    /**
+     * 向线程事件流发送一个事件。
+     */
     public void emit(String threadId, String runId, RunEventType eventType, Object payload) {
         sink(threadId).tryEmitNext(new RunEventEnvelope<>(threadId, runId, eventType, payload));
     }
 
+    /**
+     * 订阅指定线程的事件流。
+     */
     public Flux<ServerSentEvent<RunEventEnvelope<Object>>> stream(String threadId) {
         return sink(threadId).asFlux()
                 .map(event -> ServerSentEvent.<RunEventEnvelope<Object>>builder()

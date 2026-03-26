@@ -7,6 +7,11 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 @Service
+/**
+ * 模型注册中心。
+ *
+ * 当前优先解决“可列出、可替换、可落盘”，为前端模型选择和后续多模型路由打底。
+ */
 public class ModelRegistryService {
 
     static final String MODELS_CONFIG_KEY = "models.registry";
@@ -20,6 +25,9 @@ public class ModelRegistryService {
         this.runtimeConfigRepository = runtimeConfigRepository;
     }
 
+    /**
+     * 返回当前可见的模型列表；若没有配置，则返回默认回退模型。
+     */
     public List<ModelDescriptor> listModels() {
         return runtimeConfigRepository.find(MODELS_CONFIG_KEY, MODEL_LIST_TYPE)
                 .orElseGet(this::defaultModels);

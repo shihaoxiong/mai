@@ -7,6 +7,11 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 @Service
+/**
+ * 技能注册中心。
+ *
+ * 当前负责技能列表、详情查询和启用开关，后续可扩展到安装与版本管理。
+ */
 public class SkillRegistryService {
 
     static final String SKILLS_CONFIG_KEY = "skills.registry";
@@ -20,11 +25,17 @@ public class SkillRegistryService {
         this.runtimeConfigRepository = runtimeConfigRepository;
     }
 
+    /**
+     * 返回当前技能列表；若没有外部配置，则返回默认技能。
+     */
     public List<SkillDescriptor> listSkills() {
         return runtimeConfigRepository.find(SKILLS_CONFIG_KEY, SKILL_LIST_TYPE)
                 .orElseGet(this::defaultSkills);
     }
 
+    /**
+     * 获取单个技能详情。
+     */
     public SkillDescriptor getSkill(String skillId) {
         return listSkills().stream()
                 .filter(skill -> skill.id().equals(skillId))
@@ -32,10 +43,16 @@ public class SkillRegistryService {
                 .orElseThrow(() -> new SkillNotFoundException(skillId));
     }
 
+    /**
+     * 启用指定技能。
+     */
     public SkillDescriptor enableSkill(String skillId) {
         return updateEnabled(skillId, true);
     }
 
+    /**
+     * 禁用指定技能。
+     */
     public SkillDescriptor disableSkill(String skillId) {
         return updateEnabled(skillId, false);
     }

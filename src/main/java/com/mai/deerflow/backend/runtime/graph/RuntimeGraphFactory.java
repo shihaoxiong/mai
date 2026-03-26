@@ -24,6 +24,12 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @Component
+/**
+ * 统一构造 runtime 主流程图。
+ *
+ * 当前图骨架固定为：
+ * `PrepareThread -> AssembleContext -> RunLeadAgent -> PersistArtifacts`
+ */
 public class RuntimeGraphFactory {
 
     public static final String PREPARE_THREAD_NODE = "prepareThread";
@@ -43,10 +49,16 @@ public class RuntimeGraphFactory {
         this.artifactService = artifactService;
     }
 
+    /**
+     * 使用默认编译配置创建 runtime graph。
+     */
     public CompiledGraph create(AsyncNodeActionWithConfig runLeadAgentNode) {
         return create(runLeadAgentNode, null);
     }
 
+    /**
+     * 使用指定 checkpoint saver 创建 runtime graph。
+     */
     public CompiledGraph create(AsyncNodeActionWithConfig runLeadAgentNode, BaseCheckpointSaver checkpointSaver) {
         try {
             StateGraph stateGraph = new StateGraph();
@@ -89,6 +101,9 @@ public class RuntimeGraphFactory {
         ));
     }
 
+    /**
+     * 汇总上传文件和基础上下文，供后续 lead agent 使用。
+     */
     private CompletableFuture<Map<String, Object>> assembleContextNode(OverAllState state, RunnableConfig config) {
         String userInput = state.value(RuntimeStateKeys.USER_INPUT, "");
         String threadId = resolveThreadId(state, config);
@@ -100,6 +115,9 @@ public class RuntimeGraphFactory {
         ));
     }
 
+    /**
+     * 在图尾部重新扫描 outputs 目录，生成最新产物元数据。
+     */
     private CompletableFuture<Map<String, Object>> persistArtifactsNode(OverAllState state, RunnableConfig config) {
         String threadId = resolveThreadId(state, config);
         List<ArtifactRef> artifacts = artifactService.listArtifacts(threadId);

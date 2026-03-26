@@ -4,8 +4,14 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import org.springframework.stereotype.Component;
 
 @Component
+/**
+ * 统一负责把 `LeadAgentDefinition` 装配成 `ReactAgent`。
+ */
 public class LeadAgentFactory {
 
+    /**
+     * 根据定义对象创建运行时可执行的 lead agent。
+     */
     public ReactAgent create(LeadAgentDefinition definition) {
         var builder = ReactAgent.builder()
                 .name(definition.name())

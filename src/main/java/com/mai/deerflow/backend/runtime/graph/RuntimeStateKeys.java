@@ -1,5 +1,10 @@
 package com.mai.deerflow.backend.runtime.graph;
 
+/**
+ * Runtime Graph 在 state 中使用的核心 key 常量。
+ *
+ * 统一集中定义，便于图节点、服务层和测试共享同一套命名。
+ */
 public final class RuntimeStateKeys {
 
     public static final String THREAD_ID = "threadId";

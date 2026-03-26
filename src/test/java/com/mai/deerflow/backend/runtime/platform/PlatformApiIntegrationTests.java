@@ -66,8 +66,14 @@ class PlatformApiIntegrationTests {
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$[0].id").isEqualTo("analysis")
-                .jsonPath("$[0].enabled").isEqualTo(false);
+                .jsonPath("$[0].id").isEqualTo("analysis");
+
+        webTestClient.post()
+                .uri("/api/skills/analysis/disable")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.enabled").isEqualTo(false);
 
         webTestClient.post()
                 .uri("/api/skills/analysis/enable")

@@ -13,6 +13,11 @@ import java.util.Locale;
 import java.util.Objects;
 
 @Service
+/**
+ * 统一管理线程工作区目录和虚拟路径映射。
+ *
+ * 这是文件隔离、安全校验和后续 sandbox/产物/上传服务的共同底座。
+ */
 public class ThreadWorkspaceService {
 
     private static final String VIRTUAL_ROOT_PREFIX = "/";
@@ -23,6 +28,9 @@ public class ThreadWorkspaceService {
         this.properties = properties;
     }
 
+    /**
+     * 创建线程工作区及其固定子目录。
+     */
     public ThreadWorkspace createWorkspace(String threadId) {
         String validatedThreadId = validateThreadId(threadId);
         Path threadRoot = threadRoot(validatedThreadId);
@@ -40,6 +48,9 @@ public class ThreadWorkspaceService {
         return toWorkspace(validatedThreadId);
     }
 
+    /**
+     * 获取已存在的线程工作区。
+     */
     public ThreadWorkspace getWorkspace(String threadId) {
         String validatedThreadId = validateThreadId(threadId);
         if (!Files.isDirectory(threadRoot(validatedThreadId))) {
@@ -48,6 +59,9 @@ public class ThreadWorkspaceService {
         return toWorkspace(validatedThreadId);
     }
 
+    /**
+     * 获取线程工作区；不存在时自动创建。
+     */
     public ThreadWorkspace getOrCreateWorkspace(String threadId) {
         String validatedThreadId = validateThreadId(threadId);
         return Files.isDirectory(threadRoot(validatedThreadId))
@@ -55,10 +69,16 @@ public class ThreadWorkspaceService {
                 : createWorkspace(validatedThreadId);
     }
 
+    /**
+     * 判断线程工作区是否已存在。
+     */
     public boolean exists(String threadId) {
         return Files.isDirectory(threadRoot(validateThreadId(threadId)));
     }
 
+    /**
+     * 递归删除线程工作区。
+     */
     public void deleteWorkspace(String threadId) {
         String validatedThreadId = validateThreadId(threadId);
         Path threadRoot = threadRoot(validatedThreadId);
@@ -75,6 +95,9 @@ public class ThreadWorkspaceService {
         }
     }
 
+    /**
+     * 将如 `/uploads/a.txt` 这样的虚拟路径解析成线程内真实路径。
+     */
     public Path resolveVirtualPath(String threadId, String virtualPath) {
         String validatedThreadId = validateThreadId(threadId);
         String normalizedVirtualPath = normalizeVirtualPath(virtualPath);
@@ -92,6 +115,9 @@ public class ThreadWorkspaceService {
         return resolveRelativePath(validatedThreadId, area, relativePath);
     }
 
+    /**
+     * 在指定区域下解析相对路径，并阻止路径逃逸。
+     */
     public Path resolveRelativePath(String threadId, WorkspaceArea area, String relativePath) {
         Objects.requireNonNull(area, "area must not be null");
 
@@ -108,6 +134,9 @@ public class ThreadWorkspaceService {
         return candidate;
     }
 
+    /**
+     * 将线程内真实路径反向转换成前端可见的虚拟路径。
+     */
     public String toVirtualPath(String threadId, Path realPath) {
         ThreadWorkspace workspace = getWorkspace(threadId);
         Path normalizedRealPath = realPath.toAbsolutePath().normalize();
@@ -169,6 +198,9 @@ public class ThreadWorkspaceService {
                 .orElseThrow(() -> new InvalidWorkspacePathException("Unsupported virtual root: " + rootSegment));
     }
 
+    /**
+     * 递归删除目录树时使用的访问器。
+     */
     private static final class RecursiveDeleteVisitor extends SimpleFileVisitor<Path> {
 
         @Override
