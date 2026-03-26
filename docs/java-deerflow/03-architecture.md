@@ -332,6 +332,11 @@ ${app.data-dir}/threads/{threadId}/
 
 这样既能快速启动，也能平滑走向生产治理。
 
+当前骨架实现：
+
+- 已提供 `FileRuntimeConfigRepository`
+- 默认配置文件路径为 `data/runtime-config/runtime-config.json`
+
 ## 10. SSE 事件模型
 
 前端对长期任务的体验依赖事件设计，建议统一事件协议。

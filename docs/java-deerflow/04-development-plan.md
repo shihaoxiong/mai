@@ -92,7 +92,7 @@
 
 ### P2：平台能力补齐
 
-- [ ] P2-01 实现 `RuntimeConfigRepository`
+- [x] P2-01 实现 `RuntimeConfigRepository`
   产出：动态配置抽象和文件版实现。
   完成标准：模型、MCP、Skills 开关可脱离代码硬编码。
 

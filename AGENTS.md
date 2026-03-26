@@ -131,11 +131,11 @@ Current repo baseline:
 
 If no other instruction is given, start from these tasks:
 
-1. `P2-01` Implement `RuntimeConfigRepository`.
-2. `P2-02` Implement `ModelRegistryService`.
-3. `P2-03` Implement `McpConfigService`.
-4. `P2-04` Implement `SkillRegistryService`.
-5. `P2-05` Implement `UploadService`.
+1. `P2-02` Implement `ModelRegistryService`.
+2. `P2-03` Implement `McpConfigService`.
+3. `P2-04` Implement `SkillRegistryService`.
+4. `P2-05` Implement `UploadService`.
+5. `P2-06` Implement document-to-Markdown conversion.
 
 Do not jump into advanced memory, subtasks, or production hardening before the minimal runtime path works end to end.
 
