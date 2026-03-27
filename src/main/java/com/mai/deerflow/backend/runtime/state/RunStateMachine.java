@@ -25,7 +25,11 @@ public class RunStateMachine {
                 RunStatus.WAITING_APPROVAL,
                 RunStatus.WAITING_CLARIFICATION
         ));
-        transitions.put(RunStatus.WAITING_APPROVAL, EnumSet.of(RunStatus.RUNNING, RunStatus.FAILED));
+        transitions.put(RunStatus.WAITING_APPROVAL, EnumSet.of(
+                RunStatus.RUNNING,
+                RunStatus.FAILED,
+                RunStatus.WAITING_CLARIFICATION
+        ));
         transitions.put(RunStatus.WAITING_CLARIFICATION, EnumSet.of(RunStatus.RUNNING, RunStatus.FAILED));
         transitions.put(RunStatus.COMPLETED, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));
         transitions.put(RunStatus.FAILED, EnumSet.of(RunStatus.RUNNING, RunStatus.WAITING_APPROVAL));

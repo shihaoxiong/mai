@@ -227,6 +227,40 @@ public class ThreadRuntimeService {
             return rejectedSnapshot;
         }
 
+        if (decision == ApprovalDecision.REQUEST_CLARIFICATION) {
+            String clarificationRequest = request.comment() == null || request.comment().isBlank()
+                    ? "Additional clarification is required before execution can continue"
+                    : request.comment().trim();
+
+            PendingApproval clarificationApproval = new PendingApproval(
+                    pendingApproval.threadId(),
+                    pendingApproval.runId(),
+                    pendingApproval.approvalId(),
+                    pendingApproval.message(),
+                    pendingApproval.reason(),
+                    ApprovalStatus.NEEDS_CLARIFICATION,
+                    clarificationRequest
+            );
+            persistPendingApproval(clarificationApproval);
+
+            ThreadStateSnapshot clarificationSnapshot = new ThreadStateSnapshot(
+                    threadId,
+                    pendingApproval.runId(),
+                    runStateMachine.transition(currentSnapshot.runStatus(), RunStatus.WAITING_CLARIFICATION),
+                    currentSnapshot.workspace(),
+                    currentUploads(threadId),
+                    currentArtifacts(threadId),
+                    currentSnapshot.todos(),
+                    new ApprovalState(approvalId, ApprovalStatus.NEEDS_CLARIFICATION, clarificationRequest),
+                    currentSnapshot.suggestions(),
+                    currentSnapshot.title()
+            );
+            threadSnapshots.put(threadId, clarificationSnapshot);
+            persistSnapshot(clarificationSnapshot);
+            threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.APPROVAL_REQUIRED, clarificationSnapshot.approval());
+            return clarificationSnapshot;
+        }
+
         PendingApproval approvedApproval = new PendingApproval(
                 pendingApproval.threadId(),
                 pendingApproval.runId(),
@@ -262,17 +296,42 @@ public class ThreadRuntimeService {
         PendingApproval pendingApproval = loadPendingApproval(threadId)
                 .orElseThrow(() -> new ApprovalOperationException("No pending approval exists for thread " + threadId));
 
-        if (pendingApproval.status() != ApprovalStatus.APPROVED) {
-            throw new ApprovalOperationException("Pending approval must be approved before resume");
+        if (pendingApproval.status() != ApprovalStatus.APPROVED
+                && pendingApproval.status() != ApprovalStatus.NEEDS_CLARIFICATION) {
+            throw new ApprovalOperationException("Pending approval must be approved or clarified before resume");
+        }
+
+        String resumedMessage = pendingApproval.message();
+        ApprovalState resumeApprovalState;
+        if (pendingApproval.status() == ApprovalStatus.NEEDS_CLARIFICATION) {
+            String clarificationComment = request == null || request.comment() == null || request.comment().isBlank()
+                    ? null
+                    : request.comment().trim();
+            if (clarificationComment == null) {
+                throw new ApprovalOperationException("Clarification comment must not be blank when resuming a clarification request");
+            }
+            resumedMessage = withClarification(pendingApproval.message(), clarificationComment);
+            resumeApprovalState = new ApprovalState(
+                    pendingApproval.approvalId(),
+                    ApprovalStatus.NEEDS_CLARIFICATION,
+                    clarificationComment
+            );
+        }
+        else {
+            resumeApprovalState = new ApprovalState(
+                    pendingApproval.approvalId(),
+                    ApprovalStatus.APPROVED,
+                    pendingApproval.comment()
+            );
         }
 
         ThreadStateSnapshot currentSnapshot = getThread(threadId);
         ThreadStateSnapshot resumedSnapshot = executeRun(
                 threadId,
-                pendingApproval.message(),
+                resumedMessage,
                 pendingApproval.runId(),
                 currentSnapshot,
-                new ApprovalState(pendingApproval.approvalId(), ApprovalStatus.APPROVED, pendingApproval.comment()),
+                resumeApprovalState,
                 resolveThreadContext(threadId, null)
         );
         deletePendingApproval(threadId);
@@ -497,6 +556,15 @@ public class ThreadRuntimeService {
     private String deriveTitle(String message) {
         String normalized = message.trim();
         return normalized.length() <= 48 ? normalized : normalized.substring(0, 48);
+    }
+
+    private String withClarification(String originalMessage, String clarificationComment) {
+        return """
+                %s
+
+                Additional clarification from user:
+                %s
+                """.formatted(originalMessage, clarificationComment);
     }
 
     @SuppressWarnings("unchecked")

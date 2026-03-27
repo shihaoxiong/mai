@@ -130,4 +130,66 @@ class ThreadRuntimeControllerTests {
                 .jsonPath("$.runStatus").isEqualTo("COMPLETED")
                 .jsonPath("$.approval.status").isEqualTo("APPROVED");
     }
+
+    @Test
+    void shouldRequestClarificationBeforeResumeExecution() {
+        webTestClient.post()
+                .uri("/api/threads")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "threadId": "clarification-thread"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isCreated();
+
+        AtomicReference<String> approvalId = new AtomicReference<>();
+        webTestClient.post()
+                .uri("/api/threads/clarification-thread/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "message": "deploy the approved plan",
+                          "approvalRequired": true,
+                          "approvalReason": "Need confirmation before deployment"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.runStatus").isEqualTo("WAITING_APPROVAL")
+                .jsonPath("$.approval.approvalId").value(String.class, approvalId::set);
+
+        webTestClient.post()
+                .uri("/api/threads/clarification-thread/approvals/" + approvalId.get())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "decision": "REQUEST_CLARIFICATION",
+                          "comment": "Please clarify the target environment"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.runStatus").isEqualTo("WAITING_CLARIFICATION")
+                .jsonPath("$.approval.status").isEqualTo("NEEDS_CLARIFICATION")
+                .jsonPath("$.approval.reason").isEqualTo("Please clarify the target environment");
+
+        webTestClient.post()
+                .uri("/api/threads/clarification-thread/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "comment": "Use the staging environment for the rollout"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.runStatus").isEqualTo("COMPLETED")
+                .jsonPath("$.approval.status").isEqualTo("NEEDS_CLARIFICATION")
+                .jsonPath("$.approval.reason").isEqualTo("Use the staging environment for the rollout");
+    }
 }
