@@ -25,6 +25,7 @@
 - `workspace`
 - `uploads`
 - `artifacts`
+- `messages`
 - `todos`
 - `approval`
 - `suggestions`
@@ -58,6 +59,11 @@
 - `name`
 - `virtualPath`
 - `contentType`
+
+#### `ThreadMessage`
+
+- `role`
+- `content`
 
 #### `TodoItem`
 

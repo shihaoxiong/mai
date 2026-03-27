@@ -47,6 +47,10 @@ class ThreadRuntimeControllerTests {
                 .jsonPath("$.threadId").isEqualTo(threadId)
                 .jsonPath("$.runId").isNotEmpty()
                 .jsonPath("$.runStatus").isEqualTo("COMPLETED")
+                .jsonPath("$.messages[0].role").isEqualTo("user")
+                .jsonPath("$.messages[0].content").isEqualTo("analyze the uploaded brief")
+                .jsonPath("$.messages[1].role").isEqualTo("assistant")
+                .jsonPath("$.messages[1].content").isEqualTo("Processed: analyze the uploaded brief")
                 .jsonPath("$.title").isEqualTo("analyze the uploaded brief")
                 .jsonPath("$.suggestions[0]").isEqualTo("ask for risks and next steps")
                 .jsonPath("$.suggestions[1]").isEqualTo("request a concise action checklist");

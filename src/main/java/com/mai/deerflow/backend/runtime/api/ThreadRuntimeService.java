@@ -17,6 +17,7 @@ import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
 import com.mai.deerflow.backend.runtime.contract.RunEventType;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
+import com.mai.deerflow.backend.runtime.contract.ThreadMessage;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
@@ -227,6 +228,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.workspace(),
                     currentUploads(threadId),
                     currentArtifacts(threadId),
+                    currentSnapshot.messages(),
                     currentSnapshot.todos(),
                     new ApprovalState(approvalId, ApprovalStatus.REJECTED, request.comment()),
                     currentSnapshot.suggestions(),
@@ -261,6 +263,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.workspace(),
                     currentUploads(threadId),
                     currentArtifacts(threadId),
+                    currentSnapshot.messages(),
                     currentSnapshot.todos(),
                     new ApprovalState(approvalId, ApprovalStatus.NEEDS_CLARIFICATION, clarificationRequest),
                     currentSnapshot.suggestions(),
@@ -290,6 +293,7 @@ public class ThreadRuntimeService {
                 currentSnapshot.workspace(),
                 currentUploads(threadId),
                 currentArtifacts(threadId),
+                currentSnapshot.messages(),
                 currentSnapshot.todos(),
                 new ApprovalState(approvalId, ApprovalStatus.APPROVED, request.comment()),
                 currentSnapshot.suggestions(),
@@ -390,6 +394,7 @@ public class ThreadRuntimeService {
                 workspace.toState(),
                 currentUploads(threadId),
                 currentArtifacts(threadId),
+                currentSnapshot.messages(),
                 currentSnapshot.todos(),
                 new ApprovalState(approvalId, ApprovalStatus.WAITING, reason),
                 currentSnapshot.suggestions(),
@@ -437,6 +442,7 @@ public class ThreadRuntimeService {
             OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
             List<UploadRef> uploads = currentUploads(threadId);
             List<ArtifactRef> artifacts = currentArtifacts(threadId);
+            List<ThreadMessage> messages = messagesFromState(state);
             List<TodoItem> todos = todosFromState(state);
             List<SubTaskRecord> subTasks = currentSubTasks(threadId);
             PostRunGenerationResult postRunGenerationResult = postRunGenerationService.generate(
@@ -454,6 +460,7 @@ public class ThreadRuntimeService {
                     workspace.toState(),
                     uploads,
                     artifacts,
+                    messages,
                     todos,
                     approvalState,
                     suggestionsFrom(postRunGenerationResult, state),
@@ -474,6 +481,7 @@ public class ThreadRuntimeService {
                     workspace.toState(),
                     currentUploads(threadId),
                     List.of(),
+                    currentSnapshot.messages(),
                     List.of(),
                     approvalState,
                     List.of(),
@@ -494,6 +502,7 @@ public class ThreadRuntimeService {
                 workspace.toState(),
                 currentUploads(workspace.threadId()),
                 currentArtifacts(workspace.threadId()),
+                List.of(),
                 List.of(),
                 NO_APPROVAL,
                 List.of(),
@@ -588,6 +597,18 @@ public class ThreadRuntimeService {
         return List.of();
     }
 
+    @SuppressWarnings("unchecked")
+    private List<ThreadMessage> messagesFromState(OverAllState state) {
+        if (state == null) {
+            return List.of();
+        }
+        Object leadThreadState = state.value(RuntimeStateKeys.LEAD_THREAD_STATE).orElse(Map.of());
+        if (leadThreadState instanceof Map<?, ?> leadStateMap) {
+            return runtimeAgentEnhancementService.extractMessages((Map<String, Object>) leadStateMap);
+        }
+        return List.of();
+    }
+
     private ThreadStateSnapshot refreshThreadSnapshot(ThreadStateSnapshot snapshot) {
         return new ThreadStateSnapshot(
                 snapshot.threadId(),
@@ -596,6 +617,7 @@ public class ThreadRuntimeService {
                 snapshot.workspace(),
                 currentUploads(snapshot.threadId()),
                 currentArtifacts(snapshot.threadId()),
+                snapshot.messages(),
                 snapshot.todos(),
                 snapshot.approval(),
                 snapshot.suggestions(),
@@ -648,6 +670,7 @@ public class ThreadRuntimeService {
                 snapshot.workspace(),
                 currentUploads(snapshot.threadId()),
                 currentArtifacts(snapshot.threadId()),
+                snapshot.messages(),
                 snapshot.todos(),
                 approvalState,
                 snapshot.suggestions(),
@@ -735,6 +758,7 @@ public class ThreadRuntimeService {
                 workspace.toState(),
                 currentUploads(threadId),
                 currentArtifacts(threadId),
+                messagesFromState(state),
                 todosFromState(state),
                 approvalFromState(state),
                 stringListValue(state.value(RuntimeStateKeys.SUGGESTIONS).orElse(List.of())),
@@ -774,6 +798,7 @@ public class ThreadRuntimeService {
                 baseSnapshot.workspace(),
                 currentUploads(threadId),
                 currentArtifacts(threadId),
+                baseSnapshot.messages(),
                 baseSnapshot.todos(),
                 approvalState,
                 baseSnapshot.suggestions(),

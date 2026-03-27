@@ -12,6 +12,7 @@ public record ThreadStateSnapshot(
         WorkspaceState workspace,
         List<UploadRef> uploads,
         List<ArtifactRef> artifacts,
+        List<ThreadMessage> messages,
         List<TodoItem> todos,
         ApprovalState approval,
         List<String> suggestions,

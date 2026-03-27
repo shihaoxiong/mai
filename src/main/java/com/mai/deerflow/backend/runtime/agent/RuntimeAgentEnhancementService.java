@@ -8,12 +8,15 @@ import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.TodoStatus;
+import com.mai.deerflow.backend.runtime.contract.ThreadMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -81,6 +84,28 @@ public class RuntimeAgentEnhancementService {
     }
 
     /**
+     * 从 agent 内部线程状态中提取轻量消息视图，供 runtime API 返回。
+     */
+    public List<ThreadMessage> extractMessages(Map<String, Object> threadState) {
+        if (threadState == null) {
+            return List.of();
+        }
+        Object messagesObject = threadState.get("messages");
+        if (!(messagesObject instanceof List<?> messages)) {
+            return List.of();
+        }
+
+        List<ThreadMessage> extracted = new ArrayList<>();
+        for (Object messageObject : messages) {
+            ThreadMessage message = toThreadMessage(messageObject);
+            if (message != null && message.content() != null && !message.content().isBlank()) {
+                extracted.add(message);
+            }
+        }
+        return extracted;
+    }
+
+    /**
      * 提取线程状态里可见的消息文本，主要用于验证摘要 hook 是否生效。
      */
     public List<String> extractMessageTexts(Map<String, Object> threadState) {
@@ -104,6 +129,12 @@ public class RuntimeAgentEnhancementService {
 
     private String extractMessageText(Object messageObject) {
         if (messageObject instanceof Message message) {
+            if (message instanceof ToolResponseMessage toolResponseMessage) {
+                return toolResponseMessage.getResponses().stream()
+                        .map(ToolResponseMessage.ToolResponse::responseData)
+                        .reduce((left, right) -> left + "\n" + right)
+                        .orElse("");
+            }
             return message.getText();
         }
         if (messageObject instanceof Map<?, ?> messageMap) {
@@ -112,7 +143,18 @@ public class RuntimeAgentEnhancementService {
                 return String.valueOf(text);
             }
             Object textContent = messageMap.get("textContent");
-            return textContent == null ? null : String.valueOf(textContent);
+            if (textContent != null) {
+                return String.valueOf(textContent);
+            }
+            Object responses = messageMap.get("responses");
+            if (responses instanceof List<?> responseList) {
+                return responseList.stream()
+                        .map(this::extractToolResponseData)
+                        .filter(value -> value != null && !value.isBlank())
+                        .reduce((left, right) -> left + "\n" + right)
+                        .orElse(null);
+            }
+            return null;
         }
         return null;
     }
@@ -150,6 +192,41 @@ public class RuntimeAgentEnhancementService {
             case "BLOCKED" -> TodoStatus.BLOCKED;
             default -> TodoStatus.PENDING;
         };
+    }
+
+    private ThreadMessage toThreadMessage(Object messageObject) {
+        if (messageObject instanceof Message message) {
+            return new ThreadMessage(
+                    normalizeRole(message.getMessageType().name()),
+                    extractMessageText(messageObject)
+            );
+        }
+        if (messageObject instanceof Map<?, ?> messageMap) {
+            Object rawRole = messageMap.get("messageType");
+            if (rawRole == null) {
+                rawRole = messageMap.get("type");
+            }
+            return new ThreadMessage(
+                    normalizeRole(rawRole == null ? "unknown" : String.valueOf(rawRole)),
+                    extractMessageText(messageObject)
+            );
+        }
+        return null;
+    }
+
+    private String normalizeRole(String rawRole) {
+        return rawRole == null ? "unknown" : rawRole.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String extractToolResponseData(Object responseObject) {
+        if (responseObject instanceof ToolResponseMessage.ToolResponse toolResponse) {
+            return toolResponse.responseData();
+        }
+        if (responseObject instanceof Map<?, ?> responseMap) {
+            Object responseData = responseMap.get("responseData");
+            return responseData == null ? null : String.valueOf(responseData);
+        }
+        return null;
     }
 
 }

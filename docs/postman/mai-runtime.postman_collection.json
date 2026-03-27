@@ -1,0 +1,567 @@
+{
+  "info": {
+    "_postman_id": "b7fbf34a-2b86-4e7b-8b79-aaf4b06d30ab",
+    "name": "mai runtime and platform api",
+    "description": "Postman collection for the Java DeerFlow backend runtime and platform APIs.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "threadId",
+      "value": "postman-thread"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "approvalId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": "postman-user"
+    },
+    {
+      "key": "skillId",
+      "value": "demo-skill"
+    },
+    {
+      "key": "filename",
+      "value": "sample.txt"
+    },
+    {
+      "key": "artifactPath",
+      "value": "outputs/summary.md"
+    }
+  ],
+  "item": [
+    {
+      "name": "Runtime API",
+      "item": [
+        {
+          "name": "Create Thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.threadId) pm.collectionVariables.set('threadId', json.threadId);",
+                  "  if (json.runId) pm.collectionVariables.set('runId', json.runId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threadId\": \"{{threadId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads"
+              ]
+            },
+            "description": "Create a thread. You can clear the body to let the server generate the threadId."
+          }
+        },
+        {
+          "name": "Get Thread",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Run Thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.runId) pm.collectionVariables.set('runId', json.runId);",
+                  "  if (json.approval && json.approval.approvalId) pm.collectionVariables.set('approvalId', json.approval.approvalId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"请总结一下当前线程能力，并给出下一步建议\",\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/runs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "runs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Run Thread (Approval Required)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.runId) pm.collectionVariables.set('runId', json.runId);",
+                  "  if (json.approval && json.approval.approvalId) pm.collectionVariables.set('approvalId', json.approval.approvalId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"请在审批通过后执行发布计划\",\n  \"approvalRequired\": true,\n  \"approvalReason\": \"Need manual approval before execution\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/runs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "runs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Approve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"APPROVE\",\n  \"comment\": \"approved in postman\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/approvals/{{approvalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "approvals",
+                "{{approvalId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Request Clarification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"REQUEST_CLARIFICATION\",\n  \"comment\": \"请先确认目标环境\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/approvals/{{approvalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "approvals",
+                "{{approvalId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Resume",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"继续执行，目标环境使用 staging\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/resume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "resume"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Stream Events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "events"
+              ]
+            },
+            "description": "Postman can open the stream, but curl -N is usually easier for SSE debugging."
+          }
+        },
+        {
+          "name": "Delete Thread",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Platform API",
+      "item": [
+        {
+          "name": "List Models",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "models"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List MCP Config",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/mcp/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mcp",
+                "config"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Replace MCP Config",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"id\": \"demo-mcp\",\n    \"enabled\": true,\n    \"transport\": \"stdio\",\n    \"command\": \"node\",\n    \"args\": [\"./demo-mcp-server.js\"],\n    \"env\": {\n      \"DEMO_FLAG\": \"1\"\n    }\n  }\n]"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/mcp/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mcp",
+                "config"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Skills",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/skills",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "skills"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Skill",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/skills/{{skillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "skills",
+                "{{skillId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Enable Skill",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/skills/{{skillId}}/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "skills",
+                "{{skillId}}",
+                "enable"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Disable Skill",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/skills/{{skillId}}/disable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "skills",
+                "{{skillId}}",
+                "disable"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upload Files",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "/absolute/path/to/sample.txt"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/uploads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "uploads"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Uploads",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/uploads/list",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "uploads",
+                "list"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Upload",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/uploads/{{filename}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "uploads",
+                "{{filename}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Artifacts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/artifacts/list",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "artifacts",
+                "list"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Artifact",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/threads/{{threadId}}/artifacts/{{artifactPath}}?download=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "threads",
+                "{{threadId}}",
+                "artifacts",
+                "{{artifactPath}}"
+              ],
+              "query": [
+                {
+                  "key": "download",
+                  "value": "false"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
