@@ -1,14 +1,17 @@
 package com.mai.deerflow.backend.runtime.api;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
-import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
+import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
+import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
 import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.ArtifactRef;
@@ -34,6 +37,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -52,7 +56,7 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * 线程运行时的核心编排服务。
  *
- * 负责把线程工作区、runtime graph、lead agent、审批恢复、事件流和快照持久化串成一条完整主链路。
+ * 负责把线程工作区、runtime graph、lead agent、审批恢复和事件流串成一条完整主链路。
  */
 public class ThreadRuntimeService {
 
@@ -72,13 +76,14 @@ public class ThreadRuntimeService {
     private final MemoryExtractorJob memoryExtractorJob;
     private final SubTaskExecutor subTaskExecutor;
     private final PostRunGenerationService postRunGenerationService;
+    private final RuntimeCheckpointService runtimeCheckpointService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
                                 RuntimeGraphFactory runtimeGraphFactory,
                                 LeadAgentFactory leadAgentFactory,
                                 RuntimeAgentEnhancementService runtimeAgentEnhancementService,
-                                ChatModel chatModel,
+                                @Qualifier("runtimeChatModel") ChatModel chatModel,
                                 RunStateMachine runStateMachine,
                                 ObjectMapper objectMapper,
                                 UploadService uploadService,
@@ -86,7 +91,8 @@ public class ThreadRuntimeService {
                                 ThreadEventService threadEventService,
                                 MemoryExtractorJob memoryExtractorJob,
                                 SubTaskExecutor subTaskExecutor,
-                                PostRunGenerationService postRunGenerationService) {
+                                PostRunGenerationService postRunGenerationService,
+                                RuntimeCheckpointService runtimeCheckpointService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -100,10 +106,11 @@ public class ThreadRuntimeService {
         this.memoryExtractorJob = memoryExtractorJob;
         this.subTaskExecutor = subTaskExecutor;
         this.postRunGenerationService = postRunGenerationService;
+        this.runtimeCheckpointService = runtimeCheckpointService;
     }
 
     /**
-     * 创建线程并写入初始快照。
+     * 创建线程并初始化内存态与 checkpoint。
      */
     public ThreadStateSnapshot createThread(String requestedThreadId) {
         String threadId = requestedThreadId == null || requestedThreadId.isBlank()
@@ -113,27 +120,32 @@ public class ThreadRuntimeService {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         ThreadStateSnapshot snapshot = idleSnapshot(workspace);
         threadSnapshots.put(threadId, snapshot);
-        persistSnapshot(snapshot);
+        persistRuntimeThreadState(snapshot);
         return snapshot;
     }
 
     /**
-     * 获取线程当前状态；若内存中不存在，则尝试从磁盘快照恢复。
+     * 获取线程当前状态；若内存中不存在，则尝试从 checkpoint 恢复。
      */
     public ThreadStateSnapshot getThread(String threadId) {
         ThreadStateSnapshot snapshot = threadSnapshots.get(threadId);
         if (snapshot != null) {
             ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(snapshot);
             threadSnapshots.put(threadId, refreshedSnapshot);
-            persistSnapshot(refreshedSnapshot);
             return refreshedSnapshot;
         }
 
-        ThreadStateSnapshot persistedSnapshot = loadSnapshot(threadId).orElse(null);
-        if (persistedSnapshot != null) {
-            ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(persistedSnapshot);
+        ThreadStateSnapshot checkpointSnapshot = loadSnapshotFromCheckpoint(threadId).orElse(null);
+        if (checkpointSnapshot != null) {
+            ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(checkpointSnapshot);
             threadSnapshots.put(threadId, refreshedSnapshot);
-            persistSnapshot(refreshedSnapshot);
+            return refreshedSnapshot;
+        }
+
+        ThreadStateSnapshot pendingApprovalSnapshot = loadSnapshotFromPendingApproval(threadId).orElse(null);
+        if (pendingApprovalSnapshot != null) {
+            ThreadStateSnapshot refreshedSnapshot = refreshThreadSnapshot(pendingApprovalSnapshot);
+            threadSnapshots.put(threadId, refreshedSnapshot);
             return refreshedSnapshot;
         }
 
@@ -143,7 +155,6 @@ public class ThreadRuntimeService {
 
         ThreadStateSnapshot recoveredIdleSnapshot = idleSnapshot(threadWorkspaceService.getWorkspace(threadId));
         threadSnapshots.put(threadId, recoveredIdleSnapshot);
-        persistSnapshot(recoveredIdleSnapshot);
         return recoveredIdleSnapshot;
     }
 
@@ -177,8 +188,8 @@ public class ThreadRuntimeService {
         }
 
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        ThreadStateSnapshot currentSnapshot = currentSnapshot(threadId, workspace);
         ThreadContextMetadata threadContext = resolveThreadContext(threadId, userId);
-        ThreadStateSnapshot currentSnapshot = threadSnapshots.getOrDefault(threadId, idleSnapshot(workspace));
         String runId = UUID.randomUUID().toString();
 
         if (approvalRequired) {
@@ -222,7 +233,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.title()
             );
             threadSnapshots.put(threadId, rejectedSnapshot);
-            persistSnapshot(rejectedSnapshot);
+            persistRuntimeThreadState(rejectedSnapshot);
             threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.RUN_FAILED, rejectedSnapshot.approval());
             return rejectedSnapshot;
         }
@@ -256,7 +267,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.title()
             );
             threadSnapshots.put(threadId, clarificationSnapshot);
-            persistSnapshot(clarificationSnapshot);
+            persistRuntimeThreadState(clarificationSnapshot);
             threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.APPROVAL_REQUIRED, clarificationSnapshot.approval());
             return clarificationSnapshot;
         }
@@ -285,7 +296,7 @@ public class ThreadRuntimeService {
                 currentSnapshot.title()
         );
         threadSnapshots.put(threadId, approvedSnapshot);
-        persistSnapshot(approvedSnapshot);
+        persistRuntimeThreadState(approvedSnapshot);
         return approvedSnapshot;
     }
 
@@ -347,6 +358,7 @@ public class ThreadRuntimeService {
         }
         threadSnapshots.remove(threadId);
         deletePendingApproval(threadId);
+        runtimeCheckpointService.deleteThreadCheckpoints(threadId);
         threadWorkspaceService.deleteWorkspace(threadId);
     }
 
@@ -385,7 +397,7 @@ public class ThreadRuntimeService {
         );
 
         threadSnapshots.put(threadId, waitingSnapshot);
-        persistSnapshot(waitingSnapshot);
+        persistRuntimeThreadState(waitingSnapshot);
         persistPendingApproval(pendingApproval);
         threadEventService.emit(threadId, runId, RunEventType.APPROVAL_REQUIRED, waitingSnapshot.approval());
         return waitingSnapshot;
@@ -402,10 +414,12 @@ public class ThreadRuntimeService {
                                            ThreadContextMetadata threadContext) {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         AsyncNodeActionWithConfig runLeadAgentNode = runLeadAgentNode();
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        CompiledGraph runtimeGraph = runtimeGraphFactory.create(runLeadAgentNode, runtimeCheckpointService.runtimeGraphSaver());
 
         ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING, approvalState);
         threadSnapshots.put(threadId, runningSnapshot);
-        persistSnapshot(runningSnapshot);
+        persistRuntimeThreadState(runningSnapshot);
         threadEventService.emit(threadId, runId, RunEventType.RUN_STARTED, Map.of("status", RunStatus.RUNNING.name()));
 
         try {
@@ -418,15 +432,12 @@ public class ThreadRuntimeService {
                 initialState.put(RuntimeStateKeys.USER_ID, userId);
             }
 
-            Optional<OverAllState> result = runtimeGraphFactory.create(runLeadAgentNode).invoke(
-                    initialState,
-                    RunnableConfig.builder().threadId(threadId).build()
-            );
+            Optional<OverAllState> result = runtimeGraph.invoke(initialState, runtimeConfig);
 
             OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
             List<UploadRef> uploads = currentUploads(threadId);
             List<ArtifactRef> artifacts = currentArtifacts(threadId);
-            List<TodoItem> todos = extractTodosFromLeadState(state);
+            List<TodoItem> todos = todosFromState(state);
             List<SubTaskRecord> subTasks = currentSubTasks(threadId);
             PostRunGenerationResult postRunGenerationResult = postRunGenerationService.generate(
                     message,
@@ -449,8 +460,8 @@ public class ThreadRuntimeService {
                     titleFrom(postRunGenerationResult, state, message)
             );
 
+            persistRuntimeCheckpointState(runtimeGraph, runtimeConfig, snapshot);
             threadSnapshots.put(threadId, snapshot);
-            persistSnapshot(snapshot);
             scheduleMemoryExtraction(threadContext, state, snapshot, message);
             threadEventService.emit(threadId, runId, RunEventType.RUN_COMPLETED, snapshot);
             return snapshot;
@@ -469,7 +480,7 @@ public class ThreadRuntimeService {
                     deriveTitle(message)
             );
             threadSnapshots.put(threadId, failedSnapshot);
-            persistSnapshot(failedSnapshot);
+            persistRuntimeThreadState(failedSnapshot);
             threadEventService.emit(threadId, runId, RunEventType.RUN_FAILED, Map.of("message", String.valueOf(exception.getMessage())));
             throw exception;
         }
@@ -495,15 +506,10 @@ public class ThreadRuntimeService {
          * 将 lead agent 封装成 graph 节点，便于外层继续统一处理状态和后处理。
          */
         return (state, config) -> {
-            String rawUserInput = state.value(RuntimeStateKeys.USER_INPUT, "");
             String agentInput = state.value(RuntimeStateKeys.AGENT_INPUT, String.class)
                     .orElseGet(() -> state.value(RuntimeStateKeys.USER_INPUT, ""));
             String parentThreadId = state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead");
             String parentRunId = state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run");
-            String agentThreadId = "%s:%s".formatted(
-                    parentThreadId,
-                    parentRunId
-            );
             try {
                 var leadAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
                         .name("runtime-lead-agent")
@@ -511,9 +517,9 @@ public class ThreadRuntimeService {
                         .tools(List.of(subTaskExecutor.taskTool(parentThreadId, parentRunId)))
                         .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
                         .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
-                        .saver(new MemorySaver())
+                        .saver(runtimeCheckpointService.leadAgentSaver())
                         .build());
-                RunnableConfig agentConfig = RunnableConfig.builder().threadId(agentThreadId).build();
+                RunnableConfig agentConfig = RunnableConfig.builder().threadId(parentThreadId).build();
                 AssistantMessage assistantMessage = leadAgent.call(agentInput, agentConfig);
 
                 Map<String, Object> leadThreadState = Optional.ofNullable(
@@ -521,8 +527,9 @@ public class ThreadRuntimeService {
                 ).map(snapshot -> snapshot.state().data()).orElse(Map.of());
 
                 Map<String, Object> updates = new HashMap<>();
-                updates.put("assistantOutput", assistantMessage.getText());
-                updates.put("leadThreadState", leadThreadState);
+                updates.put(RuntimeStateKeys.ASSISTANT_OUTPUT, assistantMessage.getText());
+                updates.put(RuntimeStateKeys.LEAD_THREAD_STATE, leadThreadState);
+                updates.put(RuntimeStateKeys.TODOS, runtimeAgentEnhancementService.extractTodos(leadThreadState));
                 return CompletableFuture.completedFuture(updates);
             }
             catch (Exception exception) {
@@ -567,14 +574,16 @@ public class ThreadRuntimeService {
                 """.formatted(originalMessage, clarificationComment);
     }
 
-    @SuppressWarnings("unchecked")
-    private List<TodoItem> extractTodosFromLeadState(OverAllState state) {
+    private List<TodoItem> todosFromState(OverAllState state) {
         if (state == null) {
             return List.of();
         }
-        Object leadThreadState = state.value("leadThreadState").orElse(Map.of());
-        if (leadThreadState instanceof Map<?, ?> leadStateMap) {
-            return runtimeAgentEnhancementService.extractTodos((Map<String, Object>) leadStateMap);
+
+        Object todos = state.value(RuntimeStateKeys.TODOS).orElse(null);
+        if (todos instanceof List<?> todoList) {
+            return todoList.stream()
+                    .map(item -> objectMapper.convertValue(item, TodoItem.class))
+                    .toList();
         }
         return List.of();
     }
@@ -659,56 +668,131 @@ public class ThreadRuntimeService {
     }
 
     private String assistantOutputFrom(OverAllState state) {
-        return state.value("assistantOutput", String.class).orElse("");
+        return state.value(RuntimeStateKeys.ASSISTANT_OUTPUT, String.class).orElse("");
     }
 
     /**
-     * 将线程快照写入 metadata 目录，供恢复链路读取。
+     * 将 post-run 生成出的展示态同步回 graph checkpoint，
+     * 让服务重建后可以仅依赖 checkpoint 恢复核心线程状态。
      */
-    private void persistSnapshot(ThreadStateSnapshot snapshot) {
-        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(snapshot.threadId());
-        Path snapshotFile = snapshotFile(workspace);
-
+    private void persistRuntimeCheckpointState(CompiledGraph runtimeGraph,
+                                               RunnableConfig runtimeConfig,
+                                               ThreadStateSnapshot snapshot) {
         try {
-            Files.createDirectories(snapshotFile.getParent());
-            objectMapper.writeValue(snapshotFile.toFile(), snapshot);
+            runtimeGraph.updateState(runtimeConfig, runtimeProjectionState(snapshot));
         }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to persist thread snapshot for " + snapshot.threadId(), exception);
+        catch (Exception exception) {
+            logger.warn("Failed to update runtime checkpoint state for thread {}", snapshot.threadId(), exception);
         }
     }
 
     /**
-     * 从 metadata 中恢复线程快照。
+     * 将线程展示态同步进 runtime checkpoint，避免额外维护独立的 thread-state 文件。
      */
-    private Optional<ThreadStateSnapshot> loadSnapshot(String threadId) {
-        if (!threadWorkspaceService.exists(threadId)) {
-            return Optional.empty();
-        }
-
-        Path snapshotFile = snapshotFile(threadWorkspaceService.getWorkspace(threadId));
-        if (!Files.isRegularFile(snapshotFile)) {
-            return Optional.empty();
-        }
-
+    private void persistRuntimeThreadState(ThreadStateSnapshot snapshot) {
+        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(snapshot.threadId()).build();
         try {
-            return Optional.of(objectMapper.readValue(snapshotFile.toFile(), ThreadStateSnapshot.class));
+            if (runtimeGraph.stateOf(runtimeConfig).isPresent()) {
+                runtimeGraph.updateState(runtimeConfig, runtimeProjectionState(snapshot));
+                return;
+            }
+            runtimeCheckpointService.runtimeGraphSaver().put(
+                    runtimeConfig,
+                    Checkpoint.builder()
+                            .id(UUID.randomUUID().toString())
+                            .state(runtimeProjectionState(snapshot))
+                            .nodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .nextNodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .build()
+            );
         }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to load thread snapshot for " + threadId, exception);
+        catch (Exception exception) {
+            throw new IllegalStateException("Failed to persist runtime checkpoint state for " + snapshot.threadId(), exception);
         }
+    }
+
+    /**
+     * 从 runtime graph checkpoint 回填线程展示态。
+     */
+    private Optional<ThreadStateSnapshot> loadSnapshotFromCheckpoint(String threadId) {
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        Optional<StateSnapshot> stateSnapshot = runtimeGraphFactory
+                .create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver())
+                .stateOf(runtimeConfig);
+        if (stateSnapshot.isEmpty()) {
+            return Optional.empty();
+        }
+
+        OverAllState state = stateSnapshot.get().state();
+        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        RunStatus recoveredStatus = state.value(RuntimeStateKeys.RUN_STATUS, RunStatus.class).orElse(RunStatus.IDLE);
+
+        return Optional.of(new ThreadStateSnapshot(
+                threadId,
+                state.value(RuntimeStateKeys.RUN_ID, String.class).orElse(null),
+                recoveredStatus,
+                workspace.toState(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                todosFromState(state),
+                approvalFromState(state),
+                stringListValue(state.value(RuntimeStateKeys.SUGGESTIONS).orElse(List.of())),
+                state.value(RuntimeStateKeys.TITLE, String.class).orElse(null)
+        ));
+    }
+
+    /**
+     * 兼容早期仅有审批 metadata 但尚未写入 checkpoint 的线程恢复。
+     */
+    private Optional<ThreadStateSnapshot> loadSnapshotFromPendingApproval(String threadId) {
+        Optional<PendingApproval> pendingApproval = loadPendingApproval(threadId);
+        if (pendingApproval.isEmpty() || !threadWorkspaceService.exists(threadId)) {
+            return Optional.empty();
+        }
+
+        ThreadStateSnapshot baseSnapshot = loadSnapshotFromCheckpoint(threadId)
+                .orElseGet(() -> idleSnapshot(threadWorkspaceService.getWorkspace(threadId)));
+
+        ApprovalState approvalState = new ApprovalState(
+                pendingApproval.get().approvalId(),
+                pendingApproval.get().status(),
+                pendingApproval.get().comment() == null ? pendingApproval.get().reason() : pendingApproval.get().comment()
+        );
+
+        RunStatus recoveredStatus = switch (pendingApproval.get().status()) {
+            case WAITING, APPROVED -> RunStatus.WAITING_APPROVAL;
+            case NEEDS_CLARIFICATION -> RunStatus.WAITING_CLARIFICATION;
+            case REJECTED -> RunStatus.FAILED;
+            default -> baseSnapshot.runStatus();
+        };
+
+        return Optional.of(new ThreadStateSnapshot(
+                threadId,
+                pendingApproval.get().runId(),
+                recoveredStatus,
+                baseSnapshot.workspace(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                baseSnapshot.todos(),
+                approvalState,
+                baseSnapshot.suggestions(),
+                baseSnapshot.title()
+        ));
     }
 
     /**
      * 持久化待审批上下文，供审批提交和恢复执行使用。
      */
     private void persistPendingApproval(PendingApproval pendingApproval) {
-        Path approvalFile = pendingApprovalFile(pendingApproval.threadId());
         try {
-            Files.createDirectories(approvalFile.getParent());
-            objectMapper.writeValue(approvalFile.toFile(), pendingApproval);
+            persistRuntimeAuxiliaryState(
+                    pendingApproval.threadId(),
+                    Map.of(RuntimeStateKeys.PENDING_APPROVAL, pendingApproval)
+            );
+            deleteLegacyPendingApprovalFile(pendingApproval.threadId());
         }
-        catch (IOException exception) {
+        catch (RuntimeException exception) {
             throw new IllegalStateException("Failed to persist pending approval for thread " + pendingApproval.threadId(), exception);
         }
     }
@@ -717,12 +801,27 @@ public class ThreadRuntimeService {
      * 读取线程当前待审批信息。
      */
     private Optional<PendingApproval> loadPendingApproval(String threadId) {
-        Path approvalFile = pendingApprovalFile(threadId);
+        Optional<PendingApproval> pendingApprovalFromCheckpoint = checkpointValue(
+                threadId,
+                RuntimeStateKeys.PENDING_APPROVAL,
+                PendingApproval.class
+        );
+        if (pendingApprovalFromCheckpoint.isPresent()) {
+            return pendingApprovalFromCheckpoint;
+        }
+
+        if (!threadWorkspaceService.exists(threadId)) {
+            return Optional.empty();
+        }
+
+        Path approvalFile = pendingApprovalFile(threadId, false);
         if (!Files.isRegularFile(approvalFile)) {
             return Optional.empty();
         }
         try {
-            return Optional.of(objectMapper.readValue(approvalFile.toFile(), PendingApproval.class));
+            PendingApproval pendingApproval = objectMapper.readValue(approvalFile.toFile(), PendingApproval.class);
+            persistPendingApproval(pendingApproval);
+            return Optional.of(pendingApproval);
         }
         catch (IOException exception) {
             throw new IllegalStateException("Failed to load pending approval for thread " + threadId, exception);
@@ -733,13 +832,8 @@ public class ThreadRuntimeService {
      * 删除待审批持久化文件。
      */
     private void deletePendingApproval(String threadId) {
-        Path approvalFile = pendingApprovalFile(threadId);
-        try {
-            Files.deleteIfExists(approvalFile);
-        }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to delete pending approval for thread " + threadId, exception);
-        }
+        clearRuntimeAuxiliaryState(threadId, RuntimeStateKeys.PENDING_APPROVAL);
+        deleteLegacyPendingApprovalFile(threadId);
     }
 
     private ThreadContextMetadata resolveThreadContext(String threadId, String requestedUserId) {
@@ -769,28 +863,41 @@ public class ThreadRuntimeService {
             return;
         }
 
-        Path threadContextFile = threadContextFile(threadId);
         try {
-            Files.createDirectories(threadContextFile.getParent());
-            objectMapper.writeValue(threadContextFile.toFile(), threadContext);
+            persistRuntimeAuxiliaryState(
+                    threadId,
+                    Map.of(RuntimeStateKeys.THREAD_CONTEXT, threadContext)
+            );
+            deleteLegacyThreadContextFile(threadId);
         }
-        catch (IOException exception) {
+        catch (RuntimeException exception) {
             throw new IllegalStateException("Failed to persist thread context for " + threadId, exception);
         }
     }
 
     private Optional<ThreadContextMetadata> loadThreadContext(String threadId) {
+        Optional<ThreadContextMetadata> threadContextFromCheckpoint = checkpointValue(
+                threadId,
+                RuntimeStateKeys.THREAD_CONTEXT,
+                ThreadContextMetadata.class
+        );
+        if (threadContextFromCheckpoint.isPresent()) {
+            return threadContextFromCheckpoint;
+        }
+
         if (!threadWorkspaceService.exists(threadId)) {
             return Optional.empty();
         }
 
-        Path threadContextFile = threadContextFile(threadId);
+        Path threadContextFile = threadContextFile(threadId, false);
         if (!Files.isRegularFile(threadContextFile)) {
             return Optional.empty();
         }
 
         try {
-            return Optional.of(objectMapper.readValue(threadContextFile.toFile(), ThreadContextMetadata.class));
+            ThreadContextMetadata threadContext = objectMapper.readValue(threadContextFile.toFile(), ThreadContextMetadata.class);
+            persistThreadContext(threadId, threadContext);
+            return Optional.of(threadContext);
         }
         catch (IOException exception) {
             throw new IllegalStateException("Failed to load thread context for " + threadId, exception);
@@ -804,21 +911,163 @@ public class ThreadRuntimeService {
         return userId.trim();
     }
 
-    private Path snapshotFile(ThreadWorkspace workspace) {
-        return workspace.threadRoot().resolve("metadata").resolve("thread-state.json");
+    private ThreadStateSnapshot currentSnapshot(String threadId, ThreadWorkspace workspace) {
+        ThreadStateSnapshot snapshot = threadSnapshots.get(threadId);
+        if (snapshot != null) {
+            return snapshot;
+        }
+        return loadSnapshotFromCheckpoint(threadId)
+                .or(() -> loadSnapshotFromPendingApproval(threadId))
+                .orElseGet(() -> idleSnapshot(workspace));
     }
 
-    private Path pendingApprovalFile(String threadId) {
-        return threadWorkspaceService.getOrCreateWorkspace(threadId)
-                .threadRoot()
-                .resolve("metadata")
-                .resolve("pending-approval.json");
+    private AsyncNodeActionWithConfig noopLeadAgentNode() {
+        return (state, config) -> CompletableFuture.completedFuture(Map.of());
     }
 
-    private Path threadContextFile(String threadId) {
-        return threadWorkspaceService.getOrCreateWorkspace(threadId)
-                .threadRoot()
-                .resolve("metadata")
-                .resolve("thread-context.json");
+    private ApprovalState approvalFromState(OverAllState state) {
+        Object approval = state.value(RuntimeStateKeys.APPROVAL).orElse(NO_APPROVAL);
+        if (approval instanceof ApprovalState approvalState) {
+            return approvalState;
+        }
+        if (approval == null) {
+            return NO_APPROVAL;
+        }
+        return objectMapper.convertValue(approval, ApprovalState.class);
+    }
+
+    private Map<String, Object> runtimeProjectionState(ThreadStateSnapshot snapshot) {
+        Map<String, Object> updates = new HashMap<>();
+        updates.put(RuntimeStateKeys.THREAD_ID, snapshot.threadId());
+        updates.put(RuntimeStateKeys.RUN_STATUS, snapshot.runStatus());
+        updates.put(RuntimeStateKeys.APPROVAL, snapshot.approval());
+        updates.put(RuntimeStateKeys.TODOS, snapshot.todos());
+        updates.put(RuntimeStateKeys.SUGGESTIONS, snapshot.suggestions());
+        if (snapshot.runId() != null && !snapshot.runId().isBlank()) {
+            updates.put(RuntimeStateKeys.RUN_ID, snapshot.runId());
+        }
+        if (snapshot.title() != null && !snapshot.title().isBlank()) {
+            updates.put(RuntimeStateKeys.TITLE, snapshot.title());
+        }
+        return updates;
+    }
+
+    private List<String> stringListValue(Object value) {
+        if (!(value instanceof List<?> items)) {
+            return List.of();
+        }
+        return items.stream().map(String::valueOf).toList();
+    }
+
+    private <T> Optional<T> checkpointValue(String threadId, String key, Class<T> valueType) {
+        Optional<StateSnapshot> stateSnapshot = stateSnapshot(threadId);
+        if (stateSnapshot.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Optional<T> value = stateSnapshot.get().state().value(key, valueType);
+        if (value.isPresent()) {
+            return value;
+        }
+
+        Object rawValue = stateSnapshot.get().state().value(key).orElse(null);
+        if (rawValue == null) {
+            return Optional.empty();
+        }
+        return Optional.of(objectMapper.convertValue(rawValue, valueType));
+    }
+
+    private Optional<StateSnapshot> stateSnapshot(String threadId) {
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        return runtimeGraphFactory
+                .create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver())
+                .stateOf(runtimeConfig);
+    }
+
+    /**
+     * 将非展示态辅助上下文写入 runtime checkpoint。
+     */
+    private void persistRuntimeAuxiliaryState(String threadId, Map<String, Object> updates) {
+        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        try {
+            if (runtimeGraph.stateOf(runtimeConfig).isPresent()) {
+                runtimeGraph.updateState(runtimeConfig, updates);
+                return;
+            }
+
+            ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+            Map<String, Object> initialState = new HashMap<>(runtimeProjectionState(idleSnapshot(workspace)));
+            initialState.putAll(updates);
+            runtimeCheckpointService.runtimeGraphSaver().put(
+                    runtimeConfig,
+                    Checkpoint.builder()
+                            .id(UUID.randomUUID().toString())
+                            .state(initialState)
+                            .nodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .nextNodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .build()
+            );
+        }
+        catch (Exception exception) {
+            throw new IllegalStateException("Failed to persist runtime auxiliary state for " + threadId, exception);
+        }
+    }
+
+    private void clearRuntimeAuxiliaryState(String threadId, String key) {
+        Optional<StateSnapshot> stateSnapshot = stateSnapshot(threadId);
+        if (stateSnapshot.isEmpty()) {
+            return;
+        }
+
+        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        try {
+            runtimeGraph.updateState(runtimeConfig, Map.of(key, OverAllState.MARK_FOR_REMOVAL));
+        }
+        catch (Exception exception) {
+            throw new IllegalStateException("Failed to clear runtime auxiliary state for " + threadId, exception);
+        }
+    }
+
+    private void deleteLegacyPendingApprovalFile(String threadId) {
+        if (!threadWorkspaceService.exists(threadId)) {
+            return;
+        }
+        Path approvalFile = pendingApprovalFile(threadId, false);
+        try {
+            Files.deleteIfExists(approvalFile);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to delete legacy pending approval for thread " + threadId, exception);
+        }
+    }
+
+    private void deleteLegacyThreadContextFile(String threadId) {
+        if (!threadWorkspaceService.exists(threadId)) {
+            return;
+        }
+        Path threadContextFile = threadContextFile(threadId, false);
+        try {
+            Files.deleteIfExists(threadContextFile);
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to delete legacy thread context for " + threadId, exception);
+        }
+    }
+
+    private Path pendingApprovalFile(String threadId, boolean createWorkspace) {
+        return metadataDirectory(threadId, createWorkspace).resolve("pending-approval.json");
+    }
+
+    private Path threadContextFile(String threadId, boolean createWorkspace) {
+        return metadataDirectory(threadId, createWorkspace).resolve("thread-context.json");
+    }
+
+    private Path metadataDirectory(String threadId, boolean createWorkspace) {
+        ThreadWorkspace workspace = createWorkspace
+                ? threadWorkspaceService.getOrCreateWorkspace(threadId)
+                : threadWorkspaceService.getWorkspace(threadId);
+        return workspace.threadRoot().resolve("metadata");
     }
 }

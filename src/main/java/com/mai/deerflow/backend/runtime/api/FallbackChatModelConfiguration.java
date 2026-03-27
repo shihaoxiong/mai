@@ -1,8 +1,5 @@
 package com.mai.deerflow.backend.runtime.api;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -13,14 +10,14 @@ import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.List;
 
-@Configuration
 /**
- * 在没有外部模型 Bean 时提供一个可运行的回退聊天模型。
+ * 提供一个可直接复用的回退聊天模型工厂。
+ *
+ * 该类本身不再注册 Spring Bean，
+ * 由 `RuntimeChatModelConfiguration` 决定何时启用 fallback。
  */
 public class FallbackChatModelConfiguration {
 
-    @Bean
-    @ConditionalOnMissingBean(ChatModel.class)
     /**
      * 构造最小回退模型，保证本地开发和测试链路可运行。
      */

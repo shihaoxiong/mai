@@ -5,7 +5,6 @@ import com.alibaba.cloud.ai.graph.agent.hook.TokenCounter;
 import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
 import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.TodoStatus;
@@ -14,7 +13,6 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +26,6 @@ import java.util.Map;
  * 3. 从 lead agent 的内部状态里提取待办与消息文本
  */
 public class RuntimeAgentEnhancementService {
-
-    private static final String WRITE_TODOS_TOOL_NAME = "write_todos";
 
     private final ObjectMapper objectMapper;
 
@@ -69,23 +65,19 @@ public class RuntimeAgentEnhancementService {
     }
 
     /**
-     * 从 agent 内部线程状态中提取最近一次 `write_todos` 工具调用结果。
+     * 直接从 agent 内部线程状态中的 `todos` 字段提取待办列表。
      */
     public List<TodoItem> extractTodos(Map<String, Object> threadState) {
         if (threadState == null) {
             return List.of();
         }
-        Object messagesObject = threadState.get("messages");
-        if (!(messagesObject instanceof List<?> messages)) {
+        Object todosObject = threadState.get("todos");
+        if (!(todosObject instanceof List<?> todos)) {
             return List.of();
         }
-        for (int index = messages.size() - 1; index >= 0; index--) {
-            List<TodoItem> parsed = parseTodosFromMessage(messages.get(index));
-            if (!parsed.isEmpty()) {
-                return parsed;
-            }
-        }
-        return List.of();
+        return todos.stream()
+                .map(this::toTodoItem)
+                .toList();
     }
 
     /**
@@ -110,70 +102,6 @@ public class RuntimeAgentEnhancementService {
         return texts;
     }
 
-    private List<TodoItem> parseTodosFromMessage(Object messageObject) {
-        if (messageObject instanceof org.springframework.ai.chat.messages.AssistantMessage assistantMessage) {
-            return parseTodosFromToolCalls(assistantMessage.getToolCalls());
-        }
-        if (messageObject instanceof Map<?, ?> messageMap) {
-            Object toolCallsObject = messageMap.get("toolCalls");
-            if (toolCallsObject instanceof List<?> toolCalls) {
-                return parseTodosFromToolCalls(toolCalls);
-            }
-        }
-        return List.of();
-    }
-
-    private List<TodoItem> parseTodosFromToolCalls(List<?> toolCalls) {
-        for (Object toolCall : toolCalls) {
-            String toolName = extractToolCallField(toolCall, "name");
-            if (!WRITE_TODOS_TOOL_NAME.equals(toolName)) {
-                continue;
-            }
-
-            String arguments = extractToolCallField(toolCall, "arguments");
-            if (arguments == null || arguments.isBlank()) {
-                continue;
-            }
-
-            try {
-                JsonNode todosNode = objectMapper.readTree(arguments).path("todos");
-                if (!todosNode.isArray()) {
-                    return List.of();
-                }
-
-                List<TodoItem> todos = new ArrayList<>();
-                int counter = 1;
-                for (JsonNode todoNode : todosNode) {
-                    todos.add(new TodoItem(
-                            "todo-" + counter++,
-                            todoNode.path("content").asText(),
-                            toTodoStatus(todoNode.path("status").asText())
-                    ));
-                }
-                return todos;
-            }
-            catch (Exception exception) {
-                return List.of();
-            }
-        }
-        return Collections.emptyList();
-    }
-
-    private String extractToolCallField(Object toolCall, String field) {
-        if (toolCall instanceof org.springframework.ai.chat.messages.AssistantMessage.ToolCall assistantToolCall) {
-            return switch (field) {
-                case "name" -> assistantToolCall.name();
-                case "arguments" -> assistantToolCall.arguments();
-                default -> null;
-            };
-        }
-        if (toolCall instanceof Map<?, ?> toolCallMap) {
-            Object value = toolCallMap.get(field);
-            return value == null ? null : String.valueOf(value);
-        }
-        return null;
-    }
-
     private String extractMessageText(Object messageObject) {
         if (messageObject instanceof Message message) {
             return message.getText();
@@ -189,12 +117,39 @@ public class RuntimeAgentEnhancementService {
         return null;
     }
 
+    private TodoItem toTodoItem(Object todoObject) {
+        Map<?, ?> todoMap = objectMapper.convertValue(todoObject, Map.class);
+        String title = textValue(todoMap.get("title"));
+        if (title == null || title.isBlank()) {
+            title = textValue(todoMap.get("content"));
+        }
+
+        String id = textValue(todoMap.get("id"));
+        if (id == null || id.isBlank()) {
+            id = "todo-" + Math.abs(todoMap.hashCode());
+        }
+
+        return new TodoItem(
+                id,
+                title == null ? "" : title,
+                toTodoStatus(textValue(todoMap.get("status")))
+        );
+    }
+
+    private String textValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
     private TodoStatus toTodoStatus(String status) {
-        return switch (status) {
+        if (status == null || status.isBlank()) {
+            return TodoStatus.PENDING;
+        }
+        return switch (status.trim().toUpperCase().replace('-', '_')) {
             case "IN_PROGRESS" -> TodoStatus.IN_PROGRESS;
             case "COMPLETED" -> TodoStatus.COMPLETED;
             case "BLOCKED" -> TodoStatus.BLOCKED;
             default -> TodoStatus.PENDING;
         };
     }
+
 }

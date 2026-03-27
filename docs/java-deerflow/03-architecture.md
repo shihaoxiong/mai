@@ -194,7 +194,7 @@ flowchart TD
 
 说明：
 
-- `PrepareThreadNode`：确保线程目录、运行配置、checkpointer、metadata 就绪。
+- `PrepareThreadNode`：确保线程目录、运行配置和 checkpointer 就绪。
 - `LoadUploadsNode`：读取线程上传文件，准备虚拟路径映射。
 - `AssembleContextNode`：组合技能、记忆、上传文件列表、系统提示。
 - `RunLeadAgentNode`：内部调用 `ReactAgent`。
@@ -224,6 +224,7 @@ flowchart TD
 
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
+- `write_todos` 工具结果当前会同步投影到 runtime checkpoint 的 `todos` 状态，供线程查询与恢复直接复用
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
 - `SubTaskExecutor` 已接入 `SequentialAgent` 和 `ParallelAgent`，当前可在子任务层跑通一个串行和一个并行编排场景
 - 已提供 `PostRunGenerationService`，会在 run 完成后生成标题和建议问题，替换原先的静态占位值
@@ -344,7 +345,9 @@ ${app.data-dir}/threads/{threadId}/
 
 - 默认使用 `data/threads/{threadId}/` 作为线程工作区根目录。
 - 通过 `mai.workspace.base-dir` 配置工作区根目录。
-- 当前最小恢复链路会将线程快照持久化到 `metadata/thread-state.json`，用于服务实例重建后恢复线程展示状态。
+- runtime graph checkpoint 与 lead agent 会话 checkpoint 当前使用 `FileSystemSaver` 持久化到 `data/checkpoints/` 下的独立目录。
+- `GET /api/threads/{threadId}` 当前直接从 runtime checkpoint 投影线程展示态。
+- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 runtime checkpoint 中；线程 metadata 目录主要保留给子任务等线程本地文件态。
 
 ### 9.4 动态配置
 

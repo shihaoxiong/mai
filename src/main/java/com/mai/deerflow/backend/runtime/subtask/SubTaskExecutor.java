@@ -18,6 +18,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -73,7 +74,7 @@ public class SubTaskExecutor {
     @Autowired
     public SubTaskExecutor(ThreadWorkspaceService threadWorkspaceService,
                            LeadAgentFactory leadAgentFactory,
-                           ChatModel chatModel,
+                           @Qualifier("runtimeChatModel") ChatModel chatModel,
                            ThreadEventService threadEventService,
                            ObjectMapper objectMapper) {
         this(

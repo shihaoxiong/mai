@@ -1,6 +1,14 @@
 spring:
   application:
     name: java-deerflow-backend
+    ai:
+      model:
+        chat: minimax
+      minimax:
+        api-key:
+        chat:
+          options:
+            model: MiniMax-M2.7-highspeed
 
 management:
   endpoint:
@@ -20,6 +28,9 @@ mai:
     base-dir: data/threads
   runtime-config:
     file: data/runtime-config/runtime-config.json
+  runtime:
+    checkpoint:
+      base-dir: data/checkpoints
   memory:
     base-dir: data/memory
     injection:

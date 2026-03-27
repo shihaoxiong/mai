@@ -28,3 +28,10 @@
 - submit approval: `POST /api/threads/{threadId}/approvals/{approvalId}`
 - resume thread: `POST /api/threads/{threadId}/resume`
 - tests: `./mvnw test`
+
+## Runtime Persistence
+
+- runtime graph checkpoint 默认落在 `data/checkpoints/runtime-graph/`
+- lead agent 会话 checkpoint 默认落在 `data/checkpoints/lead-agent/`
+- `GET /api/threads/{threadId}` 当前直接基于 runtime checkpoint 投影线程展示态
+- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 runtime checkpoint 中

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointProperties;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.RunEventType;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
@@ -37,6 +39,7 @@ import reactor.test.StepVerifier;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -153,6 +156,8 @@ class ThreadRuntimeServiceSubTaskTests {
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
+        RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
+        runtimeCheckpointProperties.setBaseDir(tempDir.resolve("checkpoints"));
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
         MemoryExtractorJob memoryExtractorJob = new MemoryExtractorJob(fileMemoryStore, Runnable::run);
@@ -178,7 +183,8 @@ class ThreadRuntimeServiceSubTaskTests {
                 threadEventService,
                 memoryExtractorJob,
                 subTaskExecutor,
-                new PostRunGenerationService()
+                new PostRunGenerationService(),
+                new RuntimeCheckpointService(runtimeCheckpointProperties)
         );
         return new ThreadRuntimeServiceFixture(threadRuntimeService, subTaskExecutor, threadEventService);
     }

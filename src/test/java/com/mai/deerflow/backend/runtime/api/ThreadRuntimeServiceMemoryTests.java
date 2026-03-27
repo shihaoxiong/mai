@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointProperties;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.RunEventType;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
@@ -59,6 +61,8 @@ class ThreadRuntimeServiceMemoryTests {
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
+        RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
+        runtimeCheckpointProperties.setBaseDir(tempDir.resolve("checkpoints-success"));
         ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
@@ -85,7 +89,8 @@ class ThreadRuntimeServiceMemoryTests {
                 threadEventService,
                 memoryExtractorJob,
                 subTaskExecutor,
-                new PostRunGenerationService()
+                new PostRunGenerationService(),
+                new RuntimeCheckpointService(runtimeCheckpointProperties)
         );
 
         String threadId = "memory-success-" + UUID.randomUUID();
@@ -149,6 +154,8 @@ class ThreadRuntimeServiceMemoryTests {
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
+        RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
+        runtimeCheckpointProperties.setBaseDir(tempDir.resolve("checkpoints-failure"));
         ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
         RunStateMachine runStateMachine = new RunStateMachine();
         ThreadEventService threadEventService = new ThreadEventService();
@@ -175,7 +182,8 @@ class ThreadRuntimeServiceMemoryTests {
                 threadEventService,
                 memoryExtractorJob,
                 subTaskExecutor,
-                new PostRunGenerationService()
+                new PostRunGenerationService(),
+                new RuntimeCheckpointService(runtimeCheckpointProperties)
         );
 
         String threadId = "memory-failure-" + UUID.randomUUID();
