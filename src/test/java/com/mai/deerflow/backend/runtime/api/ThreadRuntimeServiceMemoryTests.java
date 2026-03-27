@@ -16,6 +16,7 @@ import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryStore;
 import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
+import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
@@ -83,7 +84,8 @@ class ThreadRuntimeServiceMemoryTests {
                 artifactService,
                 threadEventService,
                 memoryExtractorJob,
-                subTaskExecutor
+                subTaskExecutor,
+                new PostRunGenerationService()
         );
 
         String threadId = "memory-success-" + UUID.randomUUID();
@@ -172,7 +174,8 @@ class ThreadRuntimeServiceMemoryTests {
                 artifactService,
                 threadEventService,
                 memoryExtractorJob,
-                subTaskExecutor
+                subTaskExecutor,
+                new PostRunGenerationService()
         );
 
         String threadId = "memory-failure-" + UUID.randomUUID();

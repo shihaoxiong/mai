@@ -226,6 +226,7 @@ flowchart TD
 - Runtime lead agent 已接入 `TodoListInterceptor`
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
 - `SubTaskExecutor` 已接入 `SequentialAgent` 和 `ParallelAgent`，当前可在子任务层跑通一个串行和一个并行编排场景
+- 已提供 `PostRunGenerationService`，会在 run 完成后生成标题和建议问题，替换原先的静态占位值
 
 ## 7. 状态模型设计
 

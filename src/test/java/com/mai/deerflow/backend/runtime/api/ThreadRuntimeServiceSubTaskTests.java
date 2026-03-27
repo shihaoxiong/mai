@@ -14,6 +14,7 @@ import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
+import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskRecord;
@@ -176,7 +177,8 @@ class ThreadRuntimeServiceSubTaskTests {
                 artifactService,
                 threadEventService,
                 memoryExtractorJob,
-                subTaskExecutor
+                subTaskExecutor,
+                new PostRunGenerationService()
         );
         return new ThreadRuntimeServiceFixture(threadRuntimeService, subTaskExecutor, threadEventService);
     }

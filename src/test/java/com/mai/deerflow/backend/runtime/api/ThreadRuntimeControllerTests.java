@@ -46,7 +46,8 @@ class ThreadRuntimeControllerTests {
                 .jsonPath("$.runId").isNotEmpty()
                 .jsonPath("$.runStatus").isEqualTo("COMPLETED")
                 .jsonPath("$.title").isEqualTo("analyze the uploaded brief")
-                .jsonPath("$.suggestions[0]").isEqualTo("continue this thread");
+                .jsonPath("$.suggestions[0]").isEqualTo("ask for risks and next steps")
+                .jsonPath("$.suggestions[1]").isEqualTo("request a concise action checklist");
 
         webTestClient.get()
                 .uri("/api/threads/api-thread")

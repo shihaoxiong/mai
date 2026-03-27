@@ -9,6 +9,7 @@ import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
+import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
@@ -62,6 +63,9 @@ class ThreadRuntimeServiceRecoveryTests {
     @Autowired
     private SubTaskExecutor subTaskExecutor;
 
+    @Autowired
+    private PostRunGenerationService postRunGenerationService;
+
     @Test
     void shouldRecoverThreadSnapshotFromWorkspaceMetadata() {
         threadRuntimeService.createThread("recovery-thread");
@@ -79,7 +83,8 @@ class ThreadRuntimeServiceRecoveryTests {
                 artifactService,
                 threadEventService,
                 memoryExtractorJob,
-                subTaskExecutor
+                subTaskExecutor,
+                postRunGenerationService
         );
 
         ThreadStateSnapshot recoveredSnapshot = recoveredService.getThread("recovery-thread");

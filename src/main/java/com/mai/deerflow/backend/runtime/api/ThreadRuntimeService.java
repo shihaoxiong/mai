@@ -22,8 +22,11 @@ import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
+import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationResult;
+import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
+import com.mai.deerflow.backend.runtime.subtask.SubTaskRecord;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
@@ -68,6 +71,7 @@ public class ThreadRuntimeService {
     private final ThreadEventService threadEventService;
     private final MemoryExtractorJob memoryExtractorJob;
     private final SubTaskExecutor subTaskExecutor;
+    private final PostRunGenerationService postRunGenerationService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -81,7 +85,8 @@ public class ThreadRuntimeService {
                                 ArtifactService artifactService,
                                 ThreadEventService threadEventService,
                                 MemoryExtractorJob memoryExtractorJob,
-                                SubTaskExecutor subTaskExecutor) {
+                                SubTaskExecutor subTaskExecutor,
+                                PostRunGenerationService postRunGenerationService) {
         this.threadWorkspaceService = threadWorkspaceService;
         this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
@@ -94,6 +99,7 @@ public class ThreadRuntimeService {
         this.threadEventService = threadEventService;
         this.memoryExtractorJob = memoryExtractorJob;
         this.subTaskExecutor = subTaskExecutor;
+        this.postRunGenerationService = postRunGenerationService;
     }
 
     /**
@@ -359,17 +365,29 @@ public class ThreadRuntimeService {
             );
 
             OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
+            List<UploadRef> uploads = currentUploads(threadId);
+            List<ArtifactRef> artifacts = currentArtifacts(threadId);
+            List<TodoItem> todos = extractTodosFromLeadState(state);
+            List<SubTaskRecord> subTasks = currentSubTasks(threadId);
+            PostRunGenerationResult postRunGenerationResult = postRunGenerationService.generate(
+                    message,
+                    assistantOutputFrom(state),
+                    todos,
+                    uploads,
+                    artifacts,
+                    subTasks
+            );
             ThreadStateSnapshot snapshot = new ThreadStateSnapshot(
                     threadId,
                     runId,
                     runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.COMPLETED),
                     workspace.toState(),
-                    currentUploads(threadId),
-                    currentArtifacts(threadId),
-                    extractTodosFromLeadState(state),
+                    uploads,
+                    artifacts,
+                    todos,
                     approvalState,
-                    suggestionsFrom(state),
-                    titleFrom(state, message)
+                    suggestionsFrom(postRunGenerationResult, state),
+                    titleFrom(postRunGenerationResult, state, message)
             );
 
             threadSnapshots.put(threadId, snapshot);
@@ -444,8 +462,6 @@ public class ThreadRuntimeService {
                 ).map(snapshot -> snapshot.state().data()).orElse(Map.of());
 
                 Map<String, Object> updates = new HashMap<>();
-                updates.put(RuntimeStateKeys.TITLE, deriveTitle(rawUserInput));
-                updates.put(RuntimeStateKeys.SUGGESTIONS, List.of("continue this thread"));
                 updates.put("assistantOutput", assistantMessage.getText());
                 updates.put("leadThreadState", leadThreadState);
                 return CompletableFuture.completedFuture(updates);
@@ -459,7 +475,10 @@ public class ThreadRuntimeService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<String> suggestionsFrom(OverAllState state) {
+    private List<String> suggestionsFrom(PostRunGenerationResult postRunGenerationResult, OverAllState state) {
+        if (postRunGenerationResult != null && !postRunGenerationResult.suggestions().isEmpty()) {
+            return postRunGenerationResult.suggestions();
+        }
         Object suggestions = state.value(RuntimeStateKeys.SUGGESTIONS).orElse(List.of());
         if (suggestions instanceof List<?> suggestionList) {
             return suggestionList.stream().map(String::valueOf).toList();
@@ -467,7 +486,10 @@ public class ThreadRuntimeService {
         return List.of();
     }
 
-    private String titleFrom(OverAllState state, String fallbackMessage) {
+    private String titleFrom(PostRunGenerationResult postRunGenerationResult, OverAllState state, String fallbackMessage) {
+        if (postRunGenerationResult != null && postRunGenerationResult.title() != null && !postRunGenerationResult.title().isBlank()) {
+            return postRunGenerationResult.title();
+        }
         return state.value(RuntimeStateKeys.TITLE, String.class)
                 .orElseGet(() -> deriveTitle(fallbackMessage));
     }
@@ -562,6 +584,10 @@ public class ThreadRuntimeService {
 
     private List<ArtifactRef> currentArtifacts(String threadId) {
         return artifactService.listArtifacts(threadId);
+    }
+
+    private List<SubTaskRecord> currentSubTasks(String threadId) {
+        return subTaskExecutor.list(threadId);
     }
 
     private String assistantOutputFrom(OverAllState state) {
