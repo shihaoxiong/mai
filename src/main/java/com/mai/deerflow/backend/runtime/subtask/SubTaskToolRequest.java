@@ -6,6 +6,8 @@ package com.mai.deerflow.backend.runtime.subtask;
  * action:
  * - `submit`：提交子任务
  * - `status`：查询已有子任务状态
+ * - `cancel`：取消运行中的子任务
+ * - `retry`：重试失败、超时或已取消的子任务
  */
 public record SubTaskToolRequest(
         String action,
@@ -15,6 +17,7 @@ public record SubTaskToolRequest(
         String mode,
         java.util.List<SubTaskStep> steps,
         Boolean waitForCompletion,
-        Long timeoutMillis
+        Long timeoutMillis,
+        Boolean retry
 ) {
 }

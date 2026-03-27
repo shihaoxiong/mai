@@ -410,9 +410,10 @@ DeerFlow 的 subagent 不是简单直接调用另一个 Agent，而是后台任�
 
 - 已提供应用内 `SubTaskExecutor`，默认使用应用内异步执行器运行子任务。
 - 子任务状态会持久化到 `data/threads/{threadId}/metadata/subtasks/`。
-- `task` 工具当前支持 `submit` 和 `status` 两种动作；`submit` 可选择等待完成后直接返回结果。
+- `task` 工具当前支持 `submit`、`status`、`cancel`、`retry` 四种动作；`submit/retry` 可选择等待完成后直接返回结果。
 - 子任务开始与完成/失败会发出 `subtask.started` / `subtask.updated` 事件。
 - `task` 工具当前支持 `single / sequential / parallel` 三种模式，其中 `sequential` 基于 `SequentialAgent`，`parallel` 基于 `ParallelAgent`。
+- 子任务当前已支持默认执行超时、运行中取消和失败/超时后的重试；相关状态会落到 `CANCELLED` / `TIMED_OUT` / `COMPLETED` / `FAILED`。
 - `SupervisorAgent / LlmRoutingAgent` 的运行时路由集成暂未启用，后续可在现有子任务框架上继续扩展。
 
 ## 12. 安全设计

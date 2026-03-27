@@ -15,6 +15,11 @@ import org.springframework.ai.chat.model.Generation;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -144,5 +149,172 @@ class SubTaskExecutorTests {
                     assertThat(record.status()).isEqualTo(SubTaskStatus.COMPLETED);
                     assertThat(record.result()).contains("collect_result").contains("risk_result");
                 });
+    }
+
+    @Test
+    void shouldTimeoutAndRetrySubTask() {
+        ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
+        workspaceProperties.setBaseDir(tempDir.resolve("threads-timeout"));
+        ThreadWorkspaceService threadWorkspaceService = new ThreadWorkspaceService(workspaceProperties);
+        LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
+        AtomicInteger delegatedCalls = new AtomicInteger();
+        ChatModel chatModel = prompt -> {
+            int currentCall = delegatedCalls.incrementAndGet();
+            if (currentCall == 1) {
+                try {
+                    Thread.sleep(200);
+                }
+                catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return new ChatResponse(List.of(new Generation(new AssistantMessage("interrupted_timeout"))));
+                }
+                return new ChatResponse(List.of(new Generation(new AssistantMessage("late_result"))));
+            }
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("retry_success"))));
+        };
+        ThreadEventService threadEventService = new ThreadEventService();
+        ObjectMapper objectMapper = new ObjectMapper();
+        ExecutorService executionExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "subtask-timeout-test");
+            thread.setDaemon(true);
+            return thread;
+        });
+        ScheduledExecutorService timeoutScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "subtask-timeout-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        SubTaskExecutor executor = new SubTaskExecutor(
+                threadWorkspaceService,
+                leadAgentFactory,
+                chatModel,
+                threadEventService,
+                objectMapper,
+                executionExecutor,
+                timeoutScheduler
+        );
+
+        try {
+            SubTaskRecord timedOutRecord = executor.submit(
+                    "subtask-timeout-thread",
+                    "run-timeout",
+                    "timeout flow",
+                    "This task should time out first.",
+                    SubTaskOrchestrationMode.SINGLE,
+                    List.of(),
+                    50L,
+                    0
+            );
+
+            SubTaskRecord observedTimedOutRecord = awaitTerminalRecord(
+                    executor,
+                    "subtask-timeout-thread",
+                    timedOutRecord.taskId()
+            );
+            assertThat(observedTimedOutRecord.status()).isEqualTo(SubTaskStatus.TIMED_OUT);
+            assertThat(observedTimedOutRecord.errorMessage()).contains("timed out");
+
+            SubTaskRecord retriedRecord = executor.retry("subtask-timeout-thread", timedOutRecord.taskId(), 500L);
+            SubTaskRecord observedRetriedRecord = awaitTerminalRecord(
+                    executor,
+                    "subtask-timeout-thread",
+                    retriedRecord.taskId()
+            );
+            assertThat(observedRetriedRecord.status()).isEqualTo(SubTaskStatus.COMPLETED);
+            assertThat(observedRetriedRecord.retryCount()).isEqualTo(1);
+            assertThat(observedRetriedRecord.result()).contains("retry_success");
+        }
+        finally {
+            executionExecutor.shutdownNow();
+            timeoutScheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    void shouldCancelRunningSubTask() throws Exception {
+        ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
+        workspaceProperties.setBaseDir(tempDir.resolve("threads-cancel"));
+        ThreadWorkspaceService threadWorkspaceService = new ThreadWorkspaceService(workspaceProperties);
+        LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ChatModel chatModel = prompt -> {
+            started.countDown();
+            try {
+                release.await();
+            }
+            catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return new ChatResponse(List.of(new Generation(new AssistantMessage("cancelled"))));
+            }
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("should_not_finish"))));
+        };
+        ThreadEventService threadEventService = new ThreadEventService();
+        ObjectMapper objectMapper = new ObjectMapper();
+        ExecutorService executionExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "subtask-cancel-test");
+            thread.setDaemon(true);
+            return thread;
+        });
+        ScheduledExecutorService timeoutScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "subtask-cancel-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        SubTaskExecutor executor = new SubTaskExecutor(
+                threadWorkspaceService,
+                leadAgentFactory,
+                chatModel,
+                threadEventService,
+                objectMapper,
+                executionExecutor,
+                timeoutScheduler
+        );
+
+        try {
+            SubTaskRecord submittedRecord = executor.submit(
+                    "subtask-cancel-thread",
+                    "run-cancel",
+                    "cancel flow",
+                    "This task will be cancelled.",
+                    SubTaskOrchestrationMode.SINGLE,
+                    List.of(),
+                    5_000L,
+                    0
+            );
+
+            started.await();
+            SubTaskRecord cancelledRecord = executor.cancel("subtask-cancel-thread", submittedRecord.taskId());
+
+            assertThat(cancelledRecord.status()).isEqualTo(SubTaskStatus.CANCELLED);
+            assertThat(executor.find("subtask-cancel-thread", submittedRecord.taskId()))
+                    .hasValueSatisfying(record -> assertThat(record.status()).isEqualTo(SubTaskStatus.CANCELLED));
+        }
+        finally {
+            release.countDown();
+            executionExecutor.shutdownNow();
+            timeoutScheduler.shutdownNow();
+        }
+    }
+
+    private SubTaskRecord awaitTerminalRecord(SubTaskExecutor executor, String threadId, String taskId) {
+        long deadline = System.currentTimeMillis() + 2_000L;
+        while (System.currentTimeMillis() < deadline) {
+            SubTaskRecord record = executor.find(threadId, taskId).orElseThrow();
+            if (record.status() == SubTaskStatus.TIMED_OUT
+                    || record.status() == SubTaskStatus.CANCELLED
+                    || record.status() == SubTaskStatus.COMPLETED
+                    || record.status() == SubTaskStatus.FAILED) {
+                return record;
+            }
+            try {
+                Thread.sleep(20L);
+            }
+            catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return executor.find(threadId, taskId).orElseThrow();
     }
 }

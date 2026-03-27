@@ -6,6 +6,8 @@ package com.mai.deerflow.backend.runtime.subtask;
 public enum SubTaskStatus {
     PENDING,
     RUNNING,
+    CANCELLED,
+    TIMED_OUT,
     COMPLETED,
     FAILED
 }
