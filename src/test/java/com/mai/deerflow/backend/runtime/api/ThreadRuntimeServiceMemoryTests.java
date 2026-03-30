@@ -3,14 +3,16 @@ package com.mai.deerflow.backend.runtime.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointProperties;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
+import com.mai.deerflow.backend.runtime.config.FileRuntimeConfigRepository;
+import com.mai.deerflow.backend.runtime.config.RuntimeConfigProperties;
 import com.mai.deerflow.backend.runtime.contract.RunEventType;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
-import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.memory.MemoryFact;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
@@ -19,6 +21,7 @@ import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryStore;
 import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
+import com.mai.deerflow.backend.runtime.skill.SkillRegistryService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
 import com.mai.deerflow.backend.runtime.upload.DocumentMarkdownConversionService;
@@ -49,18 +52,23 @@ class ThreadRuntimeServiceMemoryTests {
         DocumentMarkdownConversionService documentMarkdownConversionService = new DocumentMarkdownConversionService();
         UploadService uploadService = new UploadService(threadWorkspaceService, documentMarkdownConversionService);
         ArtifactService artifactService = new ArtifactService(threadWorkspaceService);
+        RuntimeConfigProperties runtimeConfigProperties = new RuntimeConfigProperties();
+        runtimeConfigProperties.setFile(tempDir.resolve("runtime-config-success.json"));
+        SkillRegistryService skillRegistryService = new SkillRegistryService(
+                new FileRuntimeConfigRepository(runtimeConfigProperties, new ObjectMapper())
+        );
         MemoryStoreProperties memoryStoreProperties = new MemoryStoreProperties();
         memoryStoreProperties.setBaseDir(tempDir.resolve("memory-success"));
         FileMemoryStore fileMemoryStore = new FileMemoryStore(memoryStoreProperties, new ObjectMapper());
-        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(
-                threadWorkspaceService,
-                uploadService,
-                artifactService,
-                new MemoryInjectionService(fileMemoryStore, new MemoryInjectionProperties())
-        );
+        MemoryInjectionService memoryInjectionService = new MemoryInjectionService(fileMemoryStore, new MemoryInjectionProperties());
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
+        RuntimeLeadAgentPromptService runtimeLeadAgentPromptService = new RuntimeLeadAgentPromptService(
+                threadWorkspaceService,
+                uploadService,
+                skillRegistryService
+        );
         RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
         runtimeCheckpointProperties.setBaseDir(tempDir.resolve("checkpoints-success"));
         ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
@@ -78,9 +86,10 @@ class ThreadRuntimeServiceMemoryTests {
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 new ObjectMapper(),
@@ -129,6 +138,11 @@ class ThreadRuntimeServiceMemoryTests {
         DocumentMarkdownConversionService documentMarkdownConversionService = new DocumentMarkdownConversionService();
         UploadService uploadService = new UploadService(threadWorkspaceService, documentMarkdownConversionService);
         ArtifactService artifactService = new ArtifactService(threadWorkspaceService);
+        RuntimeConfigProperties runtimeConfigProperties = new RuntimeConfigProperties();
+        runtimeConfigProperties.setFile(tempDir.resolve("runtime-config-failure.json"));
+        SkillRegistryService skillRegistryService = new SkillRegistryService(
+                new FileRuntimeConfigRepository(runtimeConfigProperties, new ObjectMapper())
+        );
         MemoryStore failingMemoryStore = new MemoryStore() {
             @Override
             public List<MemoryFact> list(String userId, com.mai.deerflow.backend.runtime.memory.MemoryQuery query) {
@@ -145,15 +159,15 @@ class ThreadRuntimeServiceMemoryTests {
                 return false;
             }
         };
-        RuntimeGraphFactory runtimeGraphFactory = new RuntimeGraphFactory(
-                threadWorkspaceService,
-                uploadService,
-                artifactService,
-                new MemoryInjectionService(failingMemoryStore, new MemoryInjectionProperties())
-        );
+        MemoryInjectionService memoryInjectionService = new MemoryInjectionService(failingMemoryStore, new MemoryInjectionProperties());
         LeadAgentFactory leadAgentFactory = new LeadAgentFactory();
         RuntimeAgentEnhancementService runtimeAgentEnhancementService =
                 new RuntimeAgentEnhancementService(new ObjectMapper());
+        RuntimeLeadAgentPromptService runtimeLeadAgentPromptService = new RuntimeLeadAgentPromptService(
+                threadWorkspaceService,
+                uploadService,
+                skillRegistryService
+        );
         RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
         runtimeCheckpointProperties.setBaseDir(tempDir.resolve("checkpoints-failure"));
         ChatModel chatModel = new FallbackChatModelConfiguration().fallbackChatModel();
@@ -171,9 +185,10 @@ class ThreadRuntimeServiceMemoryTests {
 
         ThreadRuntimeService threadRuntimeService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 new ObjectMapper(),

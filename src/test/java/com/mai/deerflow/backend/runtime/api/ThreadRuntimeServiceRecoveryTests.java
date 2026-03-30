@@ -3,14 +3,15 @@ package com.mai.deerflow.backend.runtime.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalStatus;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
-import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
@@ -39,13 +40,16 @@ class ThreadRuntimeServiceRecoveryTests {
     private ThreadWorkspaceService threadWorkspaceService;
 
     @Autowired
-    private RuntimeGraphFactory runtimeGraphFactory;
-
-    @Autowired
     private LeadAgentFactory leadAgentFactory;
 
     @Autowired
     private RuntimeAgentEnhancementService runtimeAgentEnhancementService;
+
+    @Autowired
+    private RuntimeLeadAgentPromptService runtimeLeadAgentPromptService;
+
+    @Autowired
+    private MemoryInjectionService memoryInjectionService;
 
     @Autowired
     @Qualifier("runtimeChatModel")
@@ -92,9 +96,10 @@ class ThreadRuntimeServiceRecoveryTests {
 
         ThreadRuntimeService recoveredService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 objectMapper,
@@ -129,9 +134,10 @@ class ThreadRuntimeServiceRecoveryTests {
 
         ThreadRuntimeService recoveredService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 objectMapper,
@@ -178,9 +184,10 @@ class ThreadRuntimeServiceRecoveryTests {
 
         ThreadRuntimeService recoveredService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 objectMapper,
@@ -225,9 +232,10 @@ class ThreadRuntimeServiceRecoveryTests {
 
         ThreadRuntimeService recoveredService = new ThreadRuntimeService(
                 threadWorkspaceService,
-                runtimeGraphFactory,
                 leadAgentFactory,
                 runtimeAgentEnhancementService,
+                runtimeLeadAgentPromptService,
+                memoryInjectionService,
                 chatModel,
                 runStateMachine,
                 objectMapper,

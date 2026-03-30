@@ -47,7 +47,10 @@ public class RuntimeAgentEnhancementService {
      * 返回 runtime lead agent 默认启用的 interceptor 列表。
      */
     public List<Interceptor> defaultInterceptors() {
-        return List.of(TodoListInterceptor.builder().build());
+        return List.of(
+                TodoListInterceptor.builder().build(),
+                new AskClarificationToolInterceptor(objectMapper)
+        );
     }
 
     /**

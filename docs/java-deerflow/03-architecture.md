@@ -12,7 +12,7 @@
 ## 2. 总体设计原则
 
 - 运行时与平台能力分层，但首期采用单体部署，降低复杂度。
-- Graph 负责工作流，ReactAgent 负责推理循环。
+- 当前实现已收敛为直接使用 `ReactAgent` 承担主执行链路，线程状态统一从 lead agent state 投影。
 - 所有长任务都以 `threadId` 为恢复边界。
 - 文件、工具、记忆、审批、子任务都要纳入统一状态机。
 - 对前端暴露稳定 API，对内部保留可替换实现。
@@ -46,8 +46,7 @@ flowchart LR
     Api --> Runtime["Runtime Orchestrator"]
     Api --> Admin["Platform Admin Services"]
 
-    Runtime --> Graph["Spring AI Alibaba Graph"]
-    Graph --> Agent["ReactAgent / Multi-Agent"]
+    Runtime --> Agent["ReactAgent / Multi-Agent"]
     Agent --> Tools["Tool Registry"]
 
     Tools --> Sandbox["Sandbox SPI"]
@@ -173,35 +172,27 @@ flowchart LR
 
 ## 6. 核心运行模型
 
-Java 版不建议直接照搬 DeerFlow 的 middleware 链，而建议采用“Graph 外层 + Agent 内层”。
+当前实现已收敛为“Lead Agent 直接执行 + Lead Agent State 持久化”。
 
-### 6.1 Graph 节点建议
+### 6.1 主链路
 
 ```mermaid
 flowchart TD
-    A["START"] --> B["PrepareThreadNode"]
-    B --> C["LoadUploadsNode"]
-    C --> D["AssembleContextNode"]
-    D --> E["RunLeadAgentNode"]
-    E --> F{"NeedApproval?"}
-    F -- "yes" --> G["PauseForApprovalNode"]
-    F -- "no" --> H["PersistArtifactsNode"]
-    G --> I["END or Resume"]
-    H --> J["ScheduleMemoryExtractionNode"]
-    J --> K["GenerateTitleAndSuggestionsNode"]
-    K --> L["END"]
+    A["Run Request"] --> B["Prepare Thread Context"]
+    B --> C["Inject Memory / Build Agent Input"]
+    C --> D["Call Lead Agent"]
+    D --> E["Project Lead Agent State"]
+    E --> F["Persist Artifacts / Generate Title / Suggestions"]
+    F --> G["Return ThreadStateSnapshot"]
 ```
 
 说明：
 
-- `PrepareThreadNode`：确保线程目录、运行配置和 checkpointer 就绪。
-- `LoadUploadsNode`：读取线程上传文件，准备虚拟路径映射。
-- `AssembleContextNode`：组合技能、记忆、上传文件列表、系统提示。
-- `RunLeadAgentNode`：内部调用 `ReactAgent`。
-- `PauseForApprovalNode`：保存中断点，等待人工恢复。
-- `PersistArtifactsNode`：收集输出目录和产物元数据。
-- `ScheduleMemoryExtractionNode`：异步触发长期记忆抽取。
-- `GenerateTitleAndSuggestionsNode`：后处理，可异步或同步按配置执行。
+- `Prepare Thread Context`：确保线程目录、checkpoint、审批状态与线程上下文就绪。
+- `Inject Memory / Build Agent Input`：执行长期记忆注入，并构造真正传给 lead agent 的输入。
+- `Call Lead Agent`：直接调用 `ReactAgent`。
+- `Project Lead Agent State`：从 lead agent state 中提取 `messages/todos/approval/threadContext` 等平台字段。
+- `Persist Artifacts / Generate Title / Suggestions`：补齐线程展示态。
 
 ### 6.2 Hook / Interceptor 映射
 
@@ -218,13 +209,15 @@ flowchart TD
 结论：
 
 - Agent loop 内的行为，用 Hook/Interceptor。
-- 运行前后平台行为，用 Graph Node / Service。
+- 线程查询与恢复统一从 lead agent state 投影，不再依赖 outer graph。
 
 当前骨架实现：
 
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
-- `write_todos` 工具结果当前会同步投影到 runtime checkpoint 的 `todos` 状态，供线程查询与恢复直接复用
+- Runtime lead agent 已接入 `ask_clarification` 工具与对应拦截器，可直接把 run 转入 `WAITING_CLARIFICATION`
+- 已提供 `RuntimeLeadAgentPromptService`，按线程聚合 skills、uploads、workspace 与运行规则，并在 lead agent 创建时注入 system prompt
+- `write_todos` 工具结果当前会同步投影到 lead agent checkpoint 的 `todos` 状态，供线程查询与恢复直接复用
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
 - `SubTaskExecutor` 已接入 `SequentialAgent` 和 `ParallelAgent`，当前可在子任务层跑通一个串行和一个并行编排场景
 - 已提供 `PostRunGenerationService`，会在 run 完成后生成标题和建议问题，替换原先的静态占位值
@@ -345,9 +338,9 @@ ${app.data-dir}/threads/{threadId}/
 
 - 默认使用 `data/threads/{threadId}/` 作为线程工作区根目录。
 - 通过 `mai.workspace.base-dir` 配置工作区根目录。
-- runtime graph checkpoint 与 lead agent 会话 checkpoint 当前使用 `FileSystemSaver` 持久化到 `data/checkpoints/` 下的独立目录。
-- `GET /api/threads/{threadId}` 当前直接从 runtime checkpoint 投影线程展示态。
-- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 runtime checkpoint 中；线程 metadata 目录主要保留给子任务等线程本地文件态。
+- lead agent 会话 checkpoint 当前使用 `FileSystemSaver` 持久化到 `data/checkpoints/lead-agent/`。
+- `GET /api/threads/{threadId}` 当前直接从 lead agent state 投影线程展示态。
+- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 lead agent checkpoint 中；线程 metadata 目录主要保留给子任务等线程本地文件态。
 
 ### 9.4 动态配置
 

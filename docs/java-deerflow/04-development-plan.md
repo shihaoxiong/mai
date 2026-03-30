@@ -28,6 +28,13 @@
 
 如果按“个人 + Codex”模式持续推进，建议按 6 到 10 周预期管理，不要按多人并行节奏估算。
 
+## 3.1 当前执行焦点
+
+- runtime 主链路已经收敛为“`ThreadRuntimeService` 直接调用 lead agent”，不再回退到 outer runtime graph。
+- 线程查询、恢复、审批、todos、messages 当前统一从 lead agent state / checkpoint 投影。
+- 当前唯一 checkpoint 真相源是 lead agent saver；线程本地文件态继续保留在 `workspace / uploads / outputs / metadata/subtasks`。
+- 接下来的工作重点是继续补齐 lead agent 策略层能力，而不是重建外层 RuntimeGraph。
+
 ## 4. 当前任务列表
 
 ### P0：项目骨架与技术验证
@@ -63,6 +70,7 @@
   完成标准：自动生成 `workspace/uploads/outputs`，删除线程时能一并清理。
 
 - [x] P1-02 实现 `RuntimeGraphFactory`
+  说明：该骨架在后续迭代中已收敛为直接使用 lead agent 执行主链路，`RuntimeGraphFactory` 不再参与当前 runtime 主流程。
   产出：`PrepareThread -> AssembleContext -> RunLeadAgent -> PersistArtifacts` 的基础图。
   完成标准：能完整跑通一次多步骤任务。
 
@@ -169,6 +177,14 @@
 - [x] P3-09 补齐高级能力 E2E 场景
   产出：子任务、记忆、审批恢复端到端验证。
   完成标准：高级运行能力至少覆盖 3 个真实场景测试。
+
+- [x] P3-10 对齐 Lead Agent Prompt / Context 装配层
+  产出：统一的 lead agent prompt/context 组装服务，向主链路注入 skills、uploads、workspace 与运行规则。
+  完成标准：`ThreadRuntimeService` 继续直接调用 lead agent，且每轮执行都能感知线程级上下文，不重新引入 outer runtime graph。
+
+- [x] P3-11 实现 Agent 主动澄清链路
+  产出：`ask_clarification` 工具、受控中断映射，以及基于现有 approval/checkpoint 的恢复执行链路。
+  完成标准：lead agent 可主动进入 `WAITING_CLARIFICATION`，线程查询与恢复继续统一复用 lead agent checkpoint，不新增 outer graph。
 
 ### P4：生产化与稳定性
 

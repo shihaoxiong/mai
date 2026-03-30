@@ -3,13 +3,15 @@ package com.mai.deerflow.backend.runtime.api;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
-import com.alibaba.cloud.ai.graph.action.AsyncNodeActionWithConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mai.deerflow.backend.runtime.agent.AgentClarificationRequestedException;
+import com.mai.deerflow.backend.runtime.agent.AskClarificationRequest;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
@@ -22,10 +24,11 @@ import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
-import com.mai.deerflow.backend.runtime.graph.RuntimeGraphFactory;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionResult;
+import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationResult;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
@@ -37,13 +40,17 @@ import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,17 +64,20 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * 线程运行时的核心编排服务。
  *
- * 负责把线程工作区、runtime graph、lead agent、审批恢复和事件流串成一条完整主链路。
+ * 负责把线程工作区、lead agent、审批恢复和事件流串成一条完整主链路。
  */
 public class ThreadRuntimeService {
 
     private static final ApprovalState NO_APPROVAL = new ApprovalState(null, ApprovalStatus.NONE, null);
     private static final Logger logger = LoggerFactory.getLogger(ThreadRuntimeService.class);
+    private static final String LEAD_AGENT_START_NODE = "__START__";
+    private static final String LEAD_AGENT_MODEL_NODE = "_AGENT_MODEL_";
 
     private final ThreadWorkspaceService threadWorkspaceService;
-    private final RuntimeGraphFactory runtimeGraphFactory;
     private final LeadAgentFactory leadAgentFactory;
     private final RuntimeAgentEnhancementService runtimeAgentEnhancementService;
+    private final RuntimeLeadAgentPromptService runtimeLeadAgentPromptService;
+    private final MemoryInjectionService memoryInjectionService;
     private final ChatModel chatModel;
     private final RunStateMachine runStateMachine;
     private final ObjectMapper objectMapper;
@@ -81,9 +91,10 @@ public class ThreadRuntimeService {
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
-                                RuntimeGraphFactory runtimeGraphFactory,
                                 LeadAgentFactory leadAgentFactory,
                                 RuntimeAgentEnhancementService runtimeAgentEnhancementService,
+                                RuntimeLeadAgentPromptService runtimeLeadAgentPromptService,
+                                MemoryInjectionService memoryInjectionService,
                                 @Qualifier("runtimeChatModel") ChatModel chatModel,
                                 RunStateMachine runStateMachine,
                                 ObjectMapper objectMapper,
@@ -95,9 +106,10 @@ public class ThreadRuntimeService {
                                 PostRunGenerationService postRunGenerationService,
                                 RuntimeCheckpointService runtimeCheckpointService) {
         this.threadWorkspaceService = threadWorkspaceService;
-        this.runtimeGraphFactory = runtimeGraphFactory;
         this.leadAgentFactory = leadAgentFactory;
         this.runtimeAgentEnhancementService = runtimeAgentEnhancementService;
+        this.runtimeLeadAgentPromptService = runtimeLeadAgentPromptService;
+        this.memoryInjectionService = memoryInjectionService;
         this.chatModel = chatModel;
         this.runStateMachine = runStateMachine;
         this.objectMapper = objectMapper;
@@ -121,7 +133,7 @@ public class ThreadRuntimeService {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         ThreadStateSnapshot snapshot = idleSnapshot(workspace);
         threadSnapshots.put(threadId, snapshot);
-        persistRuntimeThreadState(snapshot);
+        persistLeadAgentThreadState(snapshot);
         return snapshot;
     }
 
@@ -235,7 +247,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.title()
             );
             threadSnapshots.put(threadId, rejectedSnapshot);
-            persistRuntimeThreadState(rejectedSnapshot);
+            persistLeadAgentThreadState(rejectedSnapshot);
             threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.RUN_FAILED, rejectedSnapshot.approval());
             return rejectedSnapshot;
         }
@@ -270,7 +282,7 @@ public class ThreadRuntimeService {
                     currentSnapshot.title()
             );
             threadSnapshots.put(threadId, clarificationSnapshot);
-            persistRuntimeThreadState(clarificationSnapshot);
+            persistLeadAgentThreadState(clarificationSnapshot);
             threadEventService.emit(threadId, pendingApproval.runId(), RunEventType.APPROVAL_REQUIRED, clarificationSnapshot.approval());
             return clarificationSnapshot;
         }
@@ -300,7 +312,7 @@ public class ThreadRuntimeService {
                 currentSnapshot.title()
         );
         threadSnapshots.put(threadId, approvedSnapshot);
-        persistRuntimeThreadState(approvedSnapshot);
+        persistLeadAgentThreadState(approvedSnapshot);
         return approvedSnapshot;
     }
 
@@ -402,14 +414,14 @@ public class ThreadRuntimeService {
         );
 
         threadSnapshots.put(threadId, waitingSnapshot);
-        persistRuntimeThreadState(waitingSnapshot);
+        persistLeadAgentThreadState(waitingSnapshot);
         persistPendingApproval(pendingApproval);
         threadEventService.emit(threadId, runId, RunEventType.APPROVAL_REQUIRED, waitingSnapshot.approval());
         return waitingSnapshot;
     }
 
     /**
-     * 执行真正的 runtime graph 主链路。
+     * 直接调用 lead agent 执行主链路。
      */
     private ThreadStateSnapshot executeRun(String threadId,
                                            String message,
@@ -418,28 +430,21 @@ public class ThreadRuntimeService {
                                            ApprovalState approvalState,
                                            ThreadContextMetadata threadContext) {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
-        AsyncNodeActionWithConfig runLeadAgentNode = runLeadAgentNode();
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
-        CompiledGraph runtimeGraph = runtimeGraphFactory.create(runLeadAgentNode, runtimeCheckpointService.runtimeGraphSaver());
+        var leadAgent = runtimeLeadAgent(threadId, runId);
 
         ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING, approvalState);
         threadSnapshots.put(threadId, runningSnapshot);
-        persistRuntimeThreadState(runningSnapshot);
+        persistLeadAgentThreadState(runningSnapshot);
         threadEventService.emit(threadId, runId, RunEventType.RUN_STARTED, Map.of("status", RunStatus.RUNNING.name()));
 
         try {
-            Map<String, Object> initialState = new HashMap<>();
-            initialState.put(RuntimeStateKeys.THREAD_ID, threadId);
-            initialState.put(RuntimeStateKeys.RUN_ID, runId);
-            initialState.put(RuntimeStateKeys.USER_INPUT, message);
             String userId = normalizeOptionalUserId(threadContext == null ? null : threadContext.userId());
-            if (userId != null) {
-                initialState.put(RuntimeStateKeys.USER_ID, userId);
-            }
-
-            Optional<OverAllState> result = runtimeGraph.invoke(initialState, runtimeConfig);
-
-            OverAllState state = result.orElseThrow(() -> new IllegalStateException("Runtime graph returned no state"));
+            MemoryInjectionResult memoryInjectionResult = memoryInjectionService.inject(userId, message);
+            AssistantMessage assistantMessage = leadAgent.call(memoryInjectionResult.effectiveUserInput(), runtimeConfig);
+            OverAllState state = Optional.ofNullable(leadAgent.getCompiledGraph().getState(runtimeConfig))
+                    .map(StateSnapshot::state)
+                    .orElseThrow(() -> new IllegalStateException("Lead agent returned no state"));
             List<UploadRef> uploads = currentUploads(threadId);
             List<ArtifactRef> artifacts = currentArtifacts(threadId);
             List<ThreadMessage> messages = messagesFromState(state);
@@ -447,7 +452,7 @@ public class ThreadRuntimeService {
             List<SubTaskRecord> subTasks = currentSubTasks(threadId);
             PostRunGenerationResult postRunGenerationResult = postRunGenerationService.generate(
                     message,
-                    assistantOutputFrom(state),
+                    assistantMessage.getText(),
                     todos,
                     uploads,
                     artifacts,
@@ -467,13 +472,26 @@ public class ThreadRuntimeService {
                     titleFrom(postRunGenerationResult, state, message)
             );
 
-            persistRuntimeCheckpointState(runtimeGraph, runtimeConfig, snapshot);
+            persistLeadAgentThreadState(snapshot);
             threadSnapshots.put(threadId, snapshot);
             scheduleMemoryExtraction(threadContext, state, snapshot, message);
             threadEventService.emit(threadId, runId, RunEventType.RUN_COMPLETED, snapshot);
             return snapshot;
         }
-        catch (RuntimeException exception) {
+        catch (Exception exception) {
+            AgentClarificationRequestedException clarificationException = clarificationException(exception);
+            if (clarificationException != null) {
+                return pauseForClarification(
+                        threadId,
+                        runId,
+                        message,
+                        runningSnapshot,
+                        workspace,
+                        runtimeConfig,
+                        clarificationException
+                );
+            }
+
             ThreadStateSnapshot failedSnapshot = new ThreadStateSnapshot(
                     threadId,
                     runId,
@@ -488,9 +506,12 @@ public class ThreadRuntimeService {
                     deriveTitle(message)
             );
             threadSnapshots.put(threadId, failedSnapshot);
-            persistRuntimeThreadState(failedSnapshot);
+            persistLeadAgentThreadState(failedSnapshot);
             threadEventService.emit(threadId, runId, RunEventType.RUN_FAILED, Map.of("message", String.valueOf(exception.getMessage())));
-            throw exception;
+            if (exception instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("Lead agent execution failed for thread " + threadId, exception);
         }
     }
 
@@ -510,43 +531,22 @@ public class ThreadRuntimeService {
         );
     }
 
-    private AsyncNodeActionWithConfig runLeadAgentNode() {
-        /**
-         * 将 lead agent 封装成 graph 节点，便于外层继续统一处理状态和后处理。
-         */
-        return (state, config) -> {
-            String agentInput = state.value(RuntimeStateKeys.AGENT_INPUT, String.class)
-                    .orElseGet(() -> state.value(RuntimeStateKeys.USER_INPUT, ""));
-            String parentThreadId = state.value(RuntimeStateKeys.THREAD_ID, String.class).orElse("runtime-lead");
-            String parentRunId = state.value(RuntimeStateKeys.RUN_ID, String.class).orElse("run");
-            try {
-                var leadAgent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
-                        .name("runtime-lead-agent")
-                        .instruction("You are the Java DeerFlow backend lead agent.")
-                        .tools(List.of(subTaskExecutor.taskTool(parentThreadId, parentRunId)))
-                        .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
-                        .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
-                        .saver(runtimeCheckpointService.leadAgentSaver())
-                        .build());
-                RunnableConfig agentConfig = RunnableConfig.builder().threadId(parentThreadId).build();
-                AssistantMessage assistantMessage = leadAgent.call(agentInput, agentConfig);
+    private com.alibaba.cloud.ai.graph.agent.ReactAgent runtimeLeadAgent(String threadId, String runId) {
+        List<ToolCallback> tools = new ArrayList<>();
+        tools.add(subTaskExecutor.taskTool(threadId, runId));
+        tools.add(askClarificationTool());
 
-                Map<String, Object> leadThreadState = Optional.ofNullable(
-                        leadAgent.getCompiledGraph().getState(agentConfig)
-                ).map(snapshot -> snapshot.state().data()).orElse(Map.of());
-
-                Map<String, Object> updates = new HashMap<>();
-                updates.put(RuntimeStateKeys.ASSISTANT_OUTPUT, assistantMessage.getText());
-                updates.put(RuntimeStateKeys.LEAD_THREAD_STATE, leadThreadState);
-                updates.put(RuntimeStateKeys.TODOS, runtimeAgentEnhancementService.extractTodos(leadThreadState));
-                return CompletableFuture.completedFuture(updates);
-            }
-            catch (Exception exception) {
-                CompletableFuture<Map<String, Object>> failed = new CompletableFuture<>();
-                failed.completeExceptionally(exception);
-                return failed;
-            }
-        };
+        com.alibaba.cloud.ai.graph.agent.ReactAgent agent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
+                .name("runtime-lead-agent")
+                .instruction(runtimeLeadAgentPromptService.instruction())
+                .systemPrompt(runtimeLeadAgentPromptService.systemPrompt(threadId))
+                .tools(tools)
+                .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
+                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .saver(runtimeCheckpointService.leadAgentSaver())
+                .build());
+        agent.asNode(false, false);
+        return agent;
     }
 
     @SuppressWarnings("unchecked")
@@ -587,14 +587,7 @@ public class ThreadRuntimeService {
         if (state == null) {
             return List.of();
         }
-
-        Object todos = state.value(RuntimeStateKeys.TODOS).orElse(null);
-        if (todos instanceof List<?> todoList) {
-            return todoList.stream()
-                    .map(item -> objectMapper.convertValue(item, TodoItem.class))
-                    .toList();
-        }
-        return List.of();
+        return runtimeAgentEnhancementService.extractTodos(state.data());
     }
 
     @SuppressWarnings("unchecked")
@@ -602,11 +595,7 @@ public class ThreadRuntimeService {
         if (state == null) {
             return List.of();
         }
-        Object leadThreadState = state.value(RuntimeStateKeys.LEAD_THREAD_STATE).orElse(Map.of());
-        if (leadThreadState instanceof Map<?, ?> leadStateMap) {
-            return runtimeAgentEnhancementService.extractMessages((Map<String, Object>) leadStateMap);
-        }
-        return List.of();
+        return runtimeAgentEnhancementService.extractMessages(state.data());
     }
 
     private ThreadStateSnapshot refreshThreadSnapshot(ThreadStateSnapshot snapshot) {
@@ -691,57 +680,111 @@ public class ThreadRuntimeService {
     }
 
     private String assistantOutputFrom(OverAllState state) {
-        return state.value(RuntimeStateKeys.ASSISTANT_OUTPUT, String.class).orElse("");
+        List<ThreadMessage> messages = messagesFromState(state);
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            ThreadMessage message = messages.get(index);
+            if ("assistant".equals(message.role())) {
+                return message.content();
+            }
+        }
+        return "";
+    }
+
+    private ToolCallback askClarificationTool() {
+        return FunctionToolCallback
+                .builder("ask_clarification", (AskClarificationRequest request) -> "clarification requested")
+                .description("""
+                        Request additional user clarification and pause the current run.
+                        Use this tool when requirements are missing, ambiguous, risky, or when you need the user to choose an approach before continuing.
+                        """)
+                .inputType(AskClarificationRequest.class)
+                .build();
+    }
+
+    private ThreadStateSnapshot pauseForClarification(String threadId,
+                                                      String runId,
+                                                      String message,
+                                                      ThreadStateSnapshot currentSnapshot,
+                                                      ThreadWorkspace workspace,
+                                                      RunnableConfig runtimeConfig,
+                                                      AgentClarificationRequestedException clarificationException) {
+        String approvalId = UUID.randomUUID().toString();
+        String clarificationPrompt = clarificationException.displayMessage();
+        Optional<OverAllState> state = safeState(runtimeConfig);
+        if (state.isEmpty()) {
+            persistLeadAgentAuxiliaryState(
+                    threadId,
+                    Map.of("messages", List.of(
+                            new UserMessage(message),
+                            new AssistantMessage(clarificationPrompt)
+                    ))
+            );
+            state = safeState(runtimeConfig);
+        }
+
+        PendingApproval pendingApproval = new PendingApproval(
+                threadId,
+                runId,
+                approvalId,
+                message,
+                clarificationPrompt,
+                ApprovalStatus.NEEDS_CLARIFICATION,
+                null
+        );
+
+        ThreadStateSnapshot clarificationSnapshot = new ThreadStateSnapshot(
+                threadId,
+                runId,
+                runStateMachine.transition(currentSnapshot.runStatus(), RunStatus.WAITING_CLARIFICATION),
+                workspace.toState(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                clarificationMessages(state.orElse(null), currentSnapshot, message, clarificationPrompt),
+                clarificationTodos(state.orElse(null), currentSnapshot),
+                new ApprovalState(approvalId, ApprovalStatus.NEEDS_CLARIFICATION, clarificationPrompt),
+                currentSnapshot.suggestions(),
+                currentSnapshot.title() == null ? deriveTitle(message) : currentSnapshot.title()
+        );
+        threadSnapshots.put(threadId, clarificationSnapshot);
+        persistLeadAgentThreadState(clarificationSnapshot);
+        persistPendingApproval(pendingApproval);
+        threadEventService.emit(threadId, runId, RunEventType.APPROVAL_REQUIRED, clarificationSnapshot.approval());
+        return clarificationSnapshot;
     }
 
     /**
-     * 将 post-run 生成出的展示态同步回 graph checkpoint，
-     * 让服务重建后可以仅依赖 checkpoint 恢复核心线程状态。
+     * 将线程展示态同步回 lead agent checkpoint。
      */
-    private void persistRuntimeCheckpointState(CompiledGraph runtimeGraph,
-                                               RunnableConfig runtimeConfig,
-                                               ThreadStateSnapshot snapshot) {
-        try {
-            runtimeGraph.updateState(runtimeConfig, runtimeProjectionState(snapshot));
-        }
-        catch (Exception exception) {
-            logger.warn("Failed to update runtime checkpoint state for thread {}", snapshot.threadId(), exception);
-        }
-    }
-
-    /**
-     * 将线程展示态同步进 runtime checkpoint，避免额外维护独立的 thread-state 文件。
-     */
-    private void persistRuntimeThreadState(ThreadStateSnapshot snapshot) {
-        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+    private void persistLeadAgentThreadState(ThreadStateSnapshot snapshot) {
+        var leadAgent = runtimeLeadAgent(snapshot.threadId(), snapshot.runId() == null ? "state" : snapshot.runId());
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(snapshot.threadId()).build();
         try {
-            if (runtimeGraph.stateOf(runtimeConfig).isPresent()) {
-                runtimeGraph.updateState(runtimeConfig, runtimeProjectionState(snapshot));
+            if (leadAgent.getCompiledGraph().stateOf(runtimeConfig).isPresent()) {
+                leadAgent.getCompiledGraph().updateState(runtimeConfig, leadAgentProjectionState(snapshot));
                 return;
             }
-            runtimeCheckpointService.runtimeGraphSaver().put(
+            runtimeCheckpointService.leadAgentSaver().put(
                     runtimeConfig,
                     Checkpoint.builder()
                             .id(UUID.randomUUID().toString())
-                            .state(runtimeProjectionState(snapshot))
-                            .nodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
-                            .nextNodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .state(leadAgentProjectionState(snapshot))
+                            .nodeId(LEAD_AGENT_START_NODE)
+                            .nextNodeId(LEAD_AGENT_MODEL_NODE)
                             .build()
             );
         }
         catch (Exception exception) {
-            throw new IllegalStateException("Failed to persist runtime checkpoint state for " + snapshot.threadId(), exception);
+            throw new IllegalStateException("Failed to persist lead agent checkpoint state for " + snapshot.threadId(), exception);
         }
     }
 
     /**
-     * 从 runtime graph checkpoint 回填线程展示态。
+     * 从 lead agent checkpoint 回填线程展示态。
      */
     private Optional<ThreadStateSnapshot> loadSnapshotFromCheckpoint(String threadId) {
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
-        Optional<StateSnapshot> stateSnapshot = runtimeGraphFactory
-                .create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver())
+        Optional<StateSnapshot> stateSnapshot = runtimeLeadAgent(threadId, "state")
+                .getCompiledGraph()
                 .stateOf(runtimeConfig);
         if (stateSnapshot.isEmpty()) {
             return Optional.empty();
@@ -811,7 +854,7 @@ public class ThreadRuntimeService {
      */
     private void persistPendingApproval(PendingApproval pendingApproval) {
         try {
-            persistRuntimeAuxiliaryState(
+            persistLeadAgentAuxiliaryState(
                     pendingApproval.threadId(),
                     Map.of(RuntimeStateKeys.PENDING_APPROVAL, pendingApproval)
             );
@@ -857,7 +900,7 @@ public class ThreadRuntimeService {
      * 删除待审批持久化文件。
      */
     private void deletePendingApproval(String threadId) {
-        clearRuntimeAuxiliaryState(threadId, RuntimeStateKeys.PENDING_APPROVAL);
+        clearLeadAgentAuxiliaryState(threadId, RuntimeStateKeys.PENDING_APPROVAL);
         deleteLegacyPendingApprovalFile(threadId);
     }
 
@@ -889,7 +932,7 @@ public class ThreadRuntimeService {
         }
 
         try {
-            persistRuntimeAuxiliaryState(
+            persistLeadAgentAuxiliaryState(
                     threadId,
                     Map.of(RuntimeStateKeys.THREAD_CONTEXT, threadContext)
             );
@@ -946,10 +989,6 @@ public class ThreadRuntimeService {
                 .orElseGet(() -> idleSnapshot(workspace));
     }
 
-    private AsyncNodeActionWithConfig noopLeadAgentNode() {
-        return (state, config) -> CompletableFuture.completedFuture(Map.of());
-    }
-
     private ApprovalState approvalFromState(OverAllState state) {
         Object approval = state.value(RuntimeStateKeys.APPROVAL).orElse(NO_APPROVAL);
         if (approval instanceof ApprovalState approvalState) {
@@ -961,7 +1000,7 @@ public class ThreadRuntimeService {
         return objectMapper.convertValue(approval, ApprovalState.class);
     }
 
-    private Map<String, Object> runtimeProjectionState(ThreadStateSnapshot snapshot) {
+    private Map<String, Object> leadAgentProjectionState(ThreadStateSnapshot snapshot) {
         Map<String, Object> updates = new HashMap<>();
         updates.put(RuntimeStateKeys.THREAD_ID, snapshot.threadId());
         updates.put(RuntimeStateKeys.RUN_STATUS, snapshot.runStatus());
@@ -1004,54 +1043,100 @@ public class ThreadRuntimeService {
 
     private Optional<StateSnapshot> stateSnapshot(String threadId) {
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
-        return runtimeGraphFactory
-                .create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver())
-                .stateOf(runtimeConfig);
+        return runtimeLeadAgent(threadId, "state").getCompiledGraph().stateOf(runtimeConfig);
+    }
+
+    private Optional<OverAllState> safeState(RunnableConfig runtimeConfig) {
+        try {
+            String threadId = runtimeConfig.threadId().orElse(null);
+            if (threadId == null) {
+                return Optional.empty();
+            }
+            return runtimeLeadAgent(threadId, "state")
+                    .getCompiledGraph()
+                    .stateOf(runtimeConfig)
+                    .map(StateSnapshot::state);
+        }
+        catch (RuntimeException exception) {
+            logger.debug("Failed to load current lead agent state for clarification handling: {}", runtimeConfig.threadId().orElse("unknown"), exception);
+            return Optional.empty();
+        }
+    }
+
+    private AgentClarificationRequestedException clarificationException(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof AgentClarificationRequestedException clarificationRequestedException) {
+                return clarificationRequestedException;
+            }
+            cursor = cursor.getCause();
+        }
+        return null;
+    }
+
+    private List<ThreadMessage> clarificationMessages(OverAllState state,
+                                                      ThreadStateSnapshot currentSnapshot,
+                                                      String message,
+                                                      String clarificationPrompt) {
+        List<ThreadMessage> messages = messagesFromState(state);
+        if (!messages.isEmpty()) {
+            return messages;
+        }
+
+        List<ThreadMessage> fallbackMessages = new ArrayList<>(currentSnapshot.messages());
+        fallbackMessages.add(new ThreadMessage("user", message));
+        fallbackMessages.add(new ThreadMessage("assistant", clarificationPrompt));
+        return List.copyOf(fallbackMessages);
+    }
+
+    private List<TodoItem> clarificationTodos(OverAllState state, ThreadStateSnapshot currentSnapshot) {
+        List<TodoItem> todos = todosFromState(state);
+        return todos.isEmpty() ? currentSnapshot.todos() : todos;
     }
 
     /**
-     * 将非展示态辅助上下文写入 runtime checkpoint。
+     * 将非展示态辅助上下文写入 lead agent checkpoint。
      */
-    private void persistRuntimeAuxiliaryState(String threadId, Map<String, Object> updates) {
-        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+    private void persistLeadAgentAuxiliaryState(String threadId, Map<String, Object> updates) {
+        var leadAgent = runtimeLeadAgent(threadId, "state");
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
         try {
-            if (runtimeGraph.stateOf(runtimeConfig).isPresent()) {
-                runtimeGraph.updateState(runtimeConfig, updates);
+            if (leadAgent.getCompiledGraph().stateOf(runtimeConfig).isPresent()) {
+                leadAgent.getCompiledGraph().updateState(runtimeConfig, updates);
                 return;
             }
 
             ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
-            Map<String, Object> initialState = new HashMap<>(runtimeProjectionState(idleSnapshot(workspace)));
+            Map<String, Object> initialState = new HashMap<>(leadAgentProjectionState(idleSnapshot(workspace)));
             initialState.putAll(updates);
-            runtimeCheckpointService.runtimeGraphSaver().put(
+            runtimeCheckpointService.leadAgentSaver().put(
                     runtimeConfig,
                     Checkpoint.builder()
                             .id(UUID.randomUUID().toString())
                             .state(initialState)
-                            .nodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
-                            .nextNodeId(RuntimeGraphFactory.PREPARE_THREAD_NODE)
+                            .nodeId(LEAD_AGENT_START_NODE)
+                            .nextNodeId(LEAD_AGENT_MODEL_NODE)
                             .build()
             );
         }
         catch (Exception exception) {
-            throw new IllegalStateException("Failed to persist runtime auxiliary state for " + threadId, exception);
+            throw new IllegalStateException("Failed to persist lead agent auxiliary state for " + threadId, exception);
         }
     }
 
-    private void clearRuntimeAuxiliaryState(String threadId, String key) {
+    private void clearLeadAgentAuxiliaryState(String threadId, String key) {
         Optional<StateSnapshot> stateSnapshot = stateSnapshot(threadId);
         if (stateSnapshot.isEmpty()) {
             return;
         }
 
-        CompiledGraph runtimeGraph = runtimeGraphFactory.create(noopLeadAgentNode(), runtimeCheckpointService.runtimeGraphSaver());
+        var leadAgent = runtimeLeadAgent(threadId, "state");
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
         try {
-            runtimeGraph.updateState(runtimeConfig, Map.of(key, OverAllState.MARK_FOR_REMOVAL));
+            leadAgent.getCompiledGraph().updateState(runtimeConfig, Map.of(key, OverAllState.MARK_FOR_REMOVAL));
         }
         catch (Exception exception) {
-            throw new IllegalStateException("Failed to clear runtime auxiliary state for " + threadId, exception);
+            throw new IllegalStateException("Failed to clear lead agent auxiliary state for " + threadId, exception);
         }
     }
 

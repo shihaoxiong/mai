@@ -200,6 +200,44 @@ class AdvancedRuntimeE2ETests {
                 .jsonPath("$.approval.reason").isEqualTo("Use the staging environment for the rollout");
     }
 
+    @Test
+    void shouldHandleAgentInitiatedClarificationEndToEnd() {
+        String threadId = "agent-clarification-e2e-" + UUID.randomUUID();
+        createdThreadIds.add(threadId);
+        createThread(threadId);
+
+        webTestClient.post()
+                .uri("/api/threads/" + threadId + "/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "message": "please clarify first before deploying this change"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.runStatus").isEqualTo("WAITING_CLARIFICATION")
+                .jsonPath("$.approval.status").isEqualTo("NEEDS_CLARIFICATION")
+                .jsonPath("$.approval.reason").value(String.class,
+                        value -> assertThat(value).contains("Which environment should I use?"));
+
+        webTestClient.post()
+                .uri("/api/threads/" + threadId + "/resume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "comment": "Use staging for this deployment"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.runStatus").isEqualTo("COMPLETED")
+                .jsonPath("$.approval.status").isEqualTo("NEEDS_CLARIFICATION")
+                .jsonPath("$.approval.reason").isEqualTo("Use staging for this deployment");
+    }
+
     private void createThread(String threadId) {
         webTestClient.post()
                 .uri("/api/threads")
@@ -299,6 +337,22 @@ class AdvancedRuntimeE2ETests {
             if (!toolResponses.isEmpty()) {
                 String toolResult = toolResponses.get(0).getResponses().get(0).responseData();
                 return response("parent_observation=" + toolResult);
+            }
+
+            if (latestUserMessage.toLowerCase().contains("clarify first")
+                    && !latestUserMessage.contains("Additional clarification from user:")) {
+                AssistantMessage toolCallMessage = AssistantMessage.builder()
+                        .content("I need clarification before continuing.")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "call-clarification",
+                                "function",
+                                "ask_clarification",
+                                """
+                                {"question":"Which environment should I use?","context":"The request mentions deployment, but the target environment is ambiguous.","options":["staging","production"]}
+                                """
+                        )))
+                        .build();
+                return new ChatResponse(List.of(new Generation(toolCallMessage)));
             }
 
             return response("Processed: " + latestUserMessage);
