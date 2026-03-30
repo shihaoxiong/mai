@@ -53,11 +53,46 @@ class RuntimeLeadAgentPromptServiceTests {
         String systemPrompt = promptService.systemPrompt(threadId);
 
         assertThat(systemPrompt)
-                .contains("不存在 outer runtime graph 主链路")
+                .contains("lead agent 主链路")
+                .contains("outer graph")
                 .contains("Analysis [analysis]")
                 .contains("/uploads/brief.md")
                 .contains("/workspace")
                 .contains("/outputs");
         assertThat(systemPrompt).doesNotContain("Disabled [disabled]");
+    }
+
+    @Test
+    void shouldAssembleTurnContextBlockWithoutMutatingPersistentMessages() throws Exception {
+        ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
+        workspaceProperties.setBaseDir(tempDir.resolve("threads-turn"));
+        ThreadWorkspaceService threadWorkspaceService = new ThreadWorkspaceService(workspaceProperties);
+        UploadService uploadService = new UploadService(threadWorkspaceService, new DocumentMarkdownConversionService());
+
+        RuntimeConfigProperties runtimeConfigProperties = new RuntimeConfigProperties();
+        runtimeConfigProperties.setFile(tempDir.resolve("runtime-config-turn.json"));
+        SkillRegistryService skillRegistryService = new SkillRegistryService(
+                new FileRuntimeConfigRepository(runtimeConfigProperties, new ObjectMapper())
+        );
+
+        String threadId = "turn-context-thread";
+        Path uploadPath = threadWorkspaceService.getOrCreateWorkspace(threadId).uploadsRoot().resolve("brief.md");
+        Files.writeString(uploadPath, "# hello deerflow");
+
+        RuntimeLeadAgentPromptService promptService = new RuntimeLeadAgentPromptService(
+                threadWorkspaceService,
+                uploadService,
+                skillRegistryService
+        );
+
+        String turnContextBlock = promptService.turnContextBlock(threadId);
+
+        assertThat(turnContextBlock)
+                .contains("<thread_data>")
+                .contains("workspace_path:")
+                .contains("uploads_path:")
+                .contains("outputs_path:")
+                .contains("<uploaded_files>")
+                .contains("/uploads/brief.md");
     }
 }

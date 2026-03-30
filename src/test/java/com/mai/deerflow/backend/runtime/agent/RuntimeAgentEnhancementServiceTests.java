@@ -1,10 +1,15 @@
 package com.mai.deerflow.backend.runtime.agent;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointProperties;
+import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
+import com.mai.deerflow.backend.runtime.contract.TodoStatus;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -14,6 +19,9 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.tool.function.FunctionToolCallback;
+
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,6 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RuntimeAgentEnhancementServiceTests {
+
+    @TempDir
+    Path tempDir;
 
     private final RuntimeAgentEnhancementService runtimeAgentEnhancementService =
             new RuntimeAgentEnhancementService(new ObjectMapper());
@@ -128,10 +139,84 @@ class RuntimeAgentEnhancementServiceTests {
         assertThat(assistantMessage.getText()).contains(RuntimeToolCallSafetyInterceptor.FORCED_STOP_MESSAGE);
     }
 
+    @Test
+    void todoReminderInterceptorShouldInjectReminderWhenTodosExistButWriteTodosIsOutOfContext() throws Exception {
+        RuntimeCheckpointProperties checkpointProperties = new RuntimeCheckpointProperties();
+        checkpointProperties.setBaseDir(tempDir.resolve("checkpoints"));
+        RuntimeCheckpointService runtimeCheckpointService = new RuntimeCheckpointService(checkpointProperties);
+        runtimeCheckpointService.leadAgentSaver().put(
+                RunnableConfig.builder().threadId("todo-reminder-thread").build(),
+                Checkpoint.builder()
+                        .id("todo-reminder-checkpoint")
+                        .state(Map.of(
+                                "todos",
+                                List.of(
+                                        new TodoItem("todo-1", "Read uploaded brief", TodoStatus.IN_PROGRESS),
+                                        new TodoItem("todo-2", "Draft summary", TodoStatus.PENDING)
+                                )
+                        ))
+                        .nodeId("__START__")
+                        .nextNodeId("_AGENT_MODEL_")
+                        .build()
+        );
+
+        var agent = leadAgentFactory.create(LeadAgentDefinition.builder(new TodoReminderAwareChatModel())
+                .name("todo-reminder-agent")
+                .instruction("Remember active todos.")
+                .interceptors(List.of(new RuntimeTodoReminderInterceptor(
+                        "todo-reminder-thread",
+                        runtimeCheckpointService,
+                        runtimeAgentEnhancementService
+                )))
+                .saver(new MemorySaver())
+                .build());
+
+        AssistantMessage assistantMessage = agent.call(
+                "continue implementation",
+                RunnableConfig.builder().threadId("todo-reminder-thread").build()
+        );
+
+        assertThat(assistantMessage.getText())
+                .contains("todoReminder=true")
+                .contains("Read uploaded brief")
+                .contains("Draft summary");
+    }
+
+    @Test
+    void viewImageInterceptorShouldInjectImageMessageAfterToolCompletion() throws Exception {
+        String imagePayload = """
+                {"path":"/uploads/sample.png","mimeType":"image/png","base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC3sAAAAASUVORK5CYII="}
+                """;
+
+        var viewImageTool = FunctionToolCallback
+                .builder("view_image", (ViewImageRequest request) -> imagePayload)
+                .description("Synthetic view_image tool for testing.")
+                .inputType(ViewImageRequest.class)
+                .build();
+
+        var agent = leadAgentFactory.create(LeadAgentDefinition.builder(new ViewImageAwareChatModel())
+                .name("view-image-agent")
+                .instruction("Inspect viewed images.")
+                .tools(List.of(viewImageTool))
+                .interceptors(runtimeAgentEnhancementService.supplementalInterceptors())
+                .saver(new MemorySaver())
+                .build());
+
+        AssistantMessage assistantMessage = agent.call("look at the uploaded image");
+
+        assertThat(assistantMessage.getText())
+                .contains("imageInjected=true")
+                .contains("mediaCount=1")
+                .contains("/uploads/sample.png");
+    }
+
     record TaskRequest(String title) {
     }
 
     record EchoRequest(String value) {
+    }
+
+    record ViewImageRequest(String path) {
     }
 
     private static final class PlanningChatModel implements ChatModel {
@@ -247,6 +332,63 @@ class RuntimeAgentEnhancementServiceTests {
                             "{\"value\":\"same\"}"
                     )))
                     .build())));
+        }
+    }
+
+    private static final class TodoReminderAwareChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            String reminder = messages.stream()
+                    .filter(SystemMessage.class::isInstance)
+                    .map(SystemMessage.class::cast)
+                    .map(SystemMessage::getText)
+                    .filter(text -> text.contains("<todo_reminder>"))
+                    .findFirst()
+                    .orElse("");
+
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "todoReminder=%s; content=%s".formatted(!reminder.isBlank(), reminder)
+            ))));
+        }
+    }
+
+    private static final class ViewImageAwareChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<ToolResponseMessage> toolResponses = messages.stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .toList();
+
+            if (toolResponses.isEmpty()) {
+                return new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                        .content("Load the image first")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "view-image-1",
+                                "function",
+                                "view_image",
+                                "{\"path\":\"/uploads/sample.png\"}"
+                        )))
+                        .build())));
+            }
+
+            UserMessage injectedImageMessage = messages.stream()
+                    .filter(UserMessage.class::isInstance)
+                    .map(UserMessage.class::cast)
+                    .filter(message -> message.getText() != null && message.getText().contains("Here are the images you've viewed:"))
+                    .findFirst()
+                    .orElseThrow();
+
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "imageInjected=true; mediaCount=%d; content=%s".formatted(
+                            injectedImageMessage.getMedia().size(),
+                            injectedImageMessage.getText()
+                    )
+            ))));
         }
     }
 }

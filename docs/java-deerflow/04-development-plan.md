@@ -190,6 +190,23 @@
   产出：`task` 调用限流与重复 tool-call 循环硬停拦截器。
   完成标准：单轮响应中的并发 `task` 调用数受控，重复工具循环不会无限消耗模型轮次。
 
+- [x] P3-13 补齐线程级文件上下文注入
+  产出：等价于 `UploadsMiddleware / ThreadDataMiddleware` 的运行时注入能力。
+  完成标准：lead agent 每轮调用模型前都能看到当前线程目录与上传文件清单，同时不污染持久化的用户消息历史。
+
+- [x] P3-14 补齐 Todo Context-Loss Reminder
+  产出：当 `todos` 仍存在但原始 `write_todos` 已离开当前上下文窗口时的提醒拦截器。
+  完成标准：lead agent 不会因为上下文裁剪而忘记仍处于活动状态的 todo 列表。
+
+- [x] P3-15 补齐 View Image 链路
+  产出：`view_image` 工具与图像上下文注入拦截器。
+  完成标准：lead agent 可从线程内图片文件加载图像，并在下一轮模型调用前把图像上下文重新注入。
+
+- [x] P3-16 补齐最小可用 Deferred Tools / Tool Search
+  产出：deferred tool 注册表、`tool_search` 工具、deferred tool 过滤拦截器。
+  完成标准：lead agent 可先通过 `tool_search` 获取隐藏工具 schema，再在后续轮次调用这些工具。
+  说明：当前 deferred tools 已覆盖本地线程文件工具与真实 stdio MCP 工具；HTTP/SSE MCP transport 后续再补。
+
 ### P4：生产化与稳定性
 
 - [ ] P4-01 实现 `ContainerSandboxProvider`

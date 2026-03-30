@@ -11,7 +11,13 @@ import com.mai.deerflow.backend.runtime.agent.AskClarificationRequest;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentDefinition;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeDeferredToolFilterInterceptor;
+import com.mai.deerflow.backend.runtime.agent.RuntimeDeferredToolService;
 import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeTodoReminderInterceptor;
+import com.mai.deerflow.backend.runtime.agent.RuntimeThreadContextInterceptor;
+import com.mai.deerflow.backend.runtime.agent.ViewImageRequest;
+import com.mai.deerflow.backend.runtime.agent.ViewedImageData;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointService;
 import com.mai.deerflow.backend.runtime.contract.ApprovalState;
@@ -42,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.tool.ToolCallback;
@@ -51,6 +58,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -88,6 +96,7 @@ public class ThreadRuntimeService {
     private final SubTaskExecutor subTaskExecutor;
     private final PostRunGenerationService postRunGenerationService;
     private final RuntimeCheckpointService runtimeCheckpointService;
+    private RuntimeDeferredToolService runtimeDeferredToolService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -120,6 +129,11 @@ public class ThreadRuntimeService {
         this.subTaskExecutor = subTaskExecutor;
         this.postRunGenerationService = postRunGenerationService;
         this.runtimeCheckpointService = runtimeCheckpointService;
+    }
+
+    @Autowired(required = false)
+    public void setRuntimeDeferredToolService(RuntimeDeferredToolService runtimeDeferredToolService) {
+        this.runtimeDeferredToolService = runtimeDeferredToolService;
     }
 
     /**
@@ -535,6 +549,18 @@ public class ThreadRuntimeService {
         List<ToolCallback> tools = new ArrayList<>();
         tools.add(subTaskExecutor.taskTool(threadId, runId));
         tools.add(askClarificationTool());
+        tools.add(viewImageTool(threadId));
+        List<String> deferredToolNames = List.of();
+        if (runtimeDeferredToolService != null) {
+            List<ToolCallback> deferredTools = runtimeDeferredToolService.deferredTools(threadId);
+            if (!deferredTools.isEmpty()) {
+                tools.add(runtimeDeferredToolService.toolSearchTool(threadId, deferredTools));
+                tools.addAll(deferredTools);
+                deferredToolNames = deferredTools.stream()
+                        .map(tool -> tool.getToolDefinition().name())
+                        .toList();
+            }
+        }
 
         com.alibaba.cloud.ai.graph.agent.ReactAgent agent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
                 .name("runtime-lead-agent")
@@ -542,11 +568,24 @@ public class ThreadRuntimeService {
                 .systemPrompt(runtimeLeadAgentPromptService.systemPrompt(threadId))
                 .tools(tools)
                 .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
-                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .interceptors(runtimeInterceptors(threadId, deferredToolNames))
                 .saver(runtimeCheckpointService.leadAgentSaver())
                 .build());
         agent.asNode(false, false);
         return agent;
+    }
+
+    private List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> runtimeInterceptors(String threadId,
+                                                                                               List<String> deferredToolNames) {
+        List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> interceptors =
+                new ArrayList<>(runtimeAgentEnhancementService.defaultInterceptors());
+        interceptors.add(0, new RuntimeThreadContextInterceptor(threadId, runtimeLeadAgentPromptService));
+        interceptors.add(1, new RuntimeTodoReminderInterceptor(threadId, runtimeCheckpointService, runtimeAgentEnhancementService));
+        if (!deferredToolNames.isEmpty()) {
+            interceptors.add(2, new RuntimeDeferredToolFilterInterceptor(deferredToolNames, objectMapper));
+        }
+        interceptors.addAll(runtimeAgentEnhancementService.supplementalInterceptors());
+        return List.copyOf(interceptors);
     }
 
     @SuppressWarnings("unchecked")
@@ -699,6 +738,81 @@ public class ThreadRuntimeService {
                         """)
                 .inputType(AskClarificationRequest.class)
                 .build();
+    }
+
+    private ToolCallback viewImageTool(String threadId) {
+        return FunctionToolCallback
+                .builder("view_image", (ViewImageRequest request) -> viewImagePayloadJson(threadId, request))
+                .description("""
+                        Load an image from the current thread workspace and make it available for the next model turn.
+                        The path must be a thread-scoped virtual path such as /uploads/example.png or /outputs/chart.jpg.
+                        """)
+                .inputType(ViewImageRequest.class)
+                .build();
+    }
+
+    private String viewImagePayloadJson(String threadId, ViewImageRequest request) {
+        try {
+            return objectMapper.writeValueAsString(loadViewedImage(threadId, request));
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to serialize viewed image payload", exception);
+        }
+    }
+
+    private ViewedImageData loadViewedImage(String threadId, ViewImageRequest request) {
+        String virtualPath = request == null ? null : request.path();
+        if (virtualPath == null || virtualPath.isBlank()) {
+            throw new IllegalArgumentException("path must not be blank");
+        }
+
+        Path realPath = threadWorkspaceService.resolveVirtualPath(threadId, virtualPath);
+        if (!Files.isRegularFile(realPath)) {
+            throw new IllegalArgumentException("Image file not found: " + virtualPath);
+        }
+
+        String mimeType = imageMimeType(realPath);
+        if (mimeType == null) {
+            throw new IllegalArgumentException("Unsupported image file: " + virtualPath);
+        }
+
+        try {
+            byte[] bytes = Files.readAllBytes(realPath);
+            return new ViewedImageData(
+                    virtualPath,
+                    mimeType,
+                    Base64.getEncoder().encodeToString(bytes)
+            );
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to read image file " + virtualPath, exception);
+        }
+    }
+
+    private String imageMimeType(Path path) {
+        try {
+            String probed = Files.probeContentType(path);
+            if (probed != null && probed.startsWith("image/")) {
+                return probed;
+            }
+        }
+        catch (IOException ignored) {
+        }
+
+        String filename = path.getFileName().toString().toLowerCase();
+        if (filename.endsWith(".png")) {
+            return "image/png";
+        }
+        if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (filename.endsWith(".gif")) {
+            return "image/gif";
+        }
+        if (filename.endsWith(".webp")) {
+            return "image/webp";
+        }
+        return null;
     }
 
     private ThreadStateSnapshot pauseForClarification(String threadId,

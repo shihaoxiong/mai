@@ -6,6 +6,7 @@ import com.mai.deerflow.backend.runtime.skill.SkillRegistryService;
 import com.mai.deerflow.backend.runtime.upload.UploadService;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspace;
 import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -25,6 +26,7 @@ public class RuntimeLeadAgentPromptService {
     private final ThreadWorkspaceService threadWorkspaceService;
     private final UploadService uploadService;
     private final SkillRegistryService skillRegistryService;
+    private RuntimeDeferredToolService runtimeDeferredToolService;
 
     public RuntimeLeadAgentPromptService(ThreadWorkspaceService threadWorkspaceService,
                                          UploadService uploadService,
@@ -32,6 +34,11 @@ public class RuntimeLeadAgentPromptService {
         this.threadWorkspaceService = threadWorkspaceService;
         this.uploadService = uploadService;
         this.skillRegistryService = skillRegistryService;
+    }
+
+    @Autowired(required = false)
+    public void setRuntimeDeferredToolService(RuntimeDeferredToolService runtimeDeferredToolService) {
+        this.runtimeDeferredToolService = runtimeDeferredToolService;
     }
 
     /**
@@ -45,22 +52,20 @@ public class RuntimeLeadAgentPromptService {
      * 组装某个线程当前运行所需的 system prompt。
      */
     public String systemPrompt(String threadId) {
-        ThreadWorkspace workspace = threadWorkspaceService.exists(threadId)
-                ? threadWorkspaceService.getWorkspace(threadId)
-                : null;
-        List<UploadRef> uploads = workspace == null
-                ? List.of()
-                : uploadService.listUploads(threadId);
+        ThreadWorkspace workspace = workspace(threadId);
+        List<UploadRef> uploads = visibleUploads(threadId, workspace);
         List<SkillDescriptor> enabledSkills = skillRegistryService.listSkills().stream()
                 .filter(SkillDescriptor::enabled)
                 .toList();
 
         StringBuilder prompt = new StringBuilder();
         prompt.append("""
+                <role>
+                You are mai, an open-source super agent.
+                </role>
+                
                 <runtime_identity>
                 你运行在 Java DeerFlow backend 的 lead agent 主链路中。
-                当前 runtime 已收敛为直接调用 lead agent；不存在 outer runtime graph 主链路。
-                线程展示态、恢复态、审批态与 checkpoint 都直接依赖你的 state。
                 </runtime_identity>
 
                 <runtime_rules>
@@ -88,9 +93,32 @@ public class RuntimeLeadAgentPromptService {
 
         appendUploadsSection(prompt, uploads);
         appendSkillsSection(prompt, enabledSkills);
+        appendDeferredToolsSection(prompt, threadId);
         appendSubTaskSection(prompt);
         prompt.append("<current_date>").append(LocalDate.now()).append("</current_date>\n");
         return prompt.toString();
+    }
+
+    /**
+     * 构造注入到“最后一条用户消息”前部的线程级上下文块。
+     *
+     * 这里只描述当前线程目录与可见上传文件，不修改真正持久化的消息内容。
+     */
+    public String turnContextBlock(String threadId) {
+        ThreadWorkspace workspace = workspace(threadId);
+        List<UploadRef> uploads = visibleUploads(threadId, workspace);
+        StringBuilder block = new StringBuilder();
+        appendThreadDataBlock(block, threadId, workspace);
+        block.append('\n');
+        appendUploadsSection(block, uploads);
+        block.append("""
+                <runtime_file_guidance>
+                - 上述路径都是当前线程的私有上下文。
+                - 如果要读取上传文件，优先使用 markdownVirtualPath；如果为空，再使用 originalVirtualPath。
+                - 不要假设这些文件信息会自动持久化进长期记忆。
+                </runtime_file_guidance>
+                """);
+        return block.toString().trim();
     }
 
     private void appendUploadsSection(StringBuilder prompt, List<UploadRef> uploads) {
@@ -109,6 +137,17 @@ public class RuntimeLeadAgentPromptService {
             }
         }
         prompt.append("</uploaded_files>\n\n");
+    }
+
+    private void appendThreadDataBlock(StringBuilder block, String threadId, ThreadWorkspace workspace) {
+        block.append("""
+                <thread_data>
+                - threadId: %s
+                - workspace_path: %s
+                - uploads_path: %s
+                - outputs_path: %s
+                </thread_data>
+                """.formatted(threadId, workspacePath(workspace), uploadsPath(workspace), outputsPath(workspace)));
     }
 
     private void appendSkillsSection(StringBuilder prompt, List<SkillDescriptor> enabledSkills) {
@@ -132,6 +171,23 @@ public class RuntimeLeadAgentPromptService {
         prompt.append("</enabled_skills>\n\n");
     }
 
+    private void appendDeferredToolsSection(StringBuilder prompt, String threadId) {
+        if (runtimeDeferredToolService == null) {
+            return;
+        }
+
+        List<String> deferredToolNames = runtimeDeferredToolService.deferredToolNames(threadId);
+        if (deferredToolNames.isEmpty()) {
+            return;
+        }
+
+        prompt.append("<available-deferred-tools>\n");
+        for (String deferredToolName : deferredToolNames) {
+            prompt.append(deferredToolName).append('\n');
+        }
+        prompt.append("</available-deferred-tools>\n\n");
+    }
+
     private void appendSubTaskSection(StringBuilder prompt) {
         prompt.append("""
                 <clarification_policy>
@@ -150,6 +206,16 @@ public class RuntimeLeadAgentPromptService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private ThreadWorkspace workspace(String threadId) {
+        return threadWorkspaceService.exists(threadId)
+                ? threadWorkspaceService.getWorkspace(threadId)
+                : null;
+    }
+
+    private List<UploadRef> visibleUploads(String threadId, ThreadWorkspace workspace) {
+        return workspace == null ? List.of() : uploadService.listUploads(threadId);
     }
 
     private String workspacePath(ThreadWorkspace workspace) {

@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
+import com.mai.deerflow.backend.runtime.agent.RuntimeDeferredToolService;
 import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
 import com.mai.deerflow.backend.runtime.checkpoint.RuntimeCheckpointProperties;
@@ -25,7 +26,6 @@ import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
 import com.mai.deerflow.backend.runtime.memory.MemoryStoreProperties;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
-import com.mai.deerflow.backend.runtime.skill.SkillDescriptor;
 import com.mai.deerflow.backend.runtime.skill.SkillRegistryService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
 import com.mai.deerflow.backend.runtime.subtask.SubTaskExecutor;
@@ -77,7 +77,7 @@ class ThreadRuntimeCheckpointTests {
             assertThat(messages.get(3).content())
                     .contains("userMessages=2")
                     .contains("assistantMessages=1")
-                    .contains("lastUser=follow up question");
+                    .contains("follow up question");
         }
         finally {
             fixture.threadRuntimeService.deleteThread(threadId);
@@ -103,7 +103,7 @@ class ThreadRuntimeCheckpointTests {
         assertThat(messages.get(1).content())
                 .contains("userMessages=1")
                 .contains("assistantMessages=0")
-                .contains("lastUser=fresh again");
+                .contains("fresh again");
 
         fixture.threadRuntimeService.deleteThread(threadId);
     }
@@ -133,33 +133,6 @@ class ThreadRuntimeCheckpointTests {
 
             assertThat(todos).hasSize(2);
             assertThat(titles).containsExactly("Read uploaded brief", "Draft summary");
-        }
-        finally {
-            fixture.threadRuntimeService.deleteThread(threadId);
-        }
-    }
-
-    @Test
-    void shouldInjectThreadScopedPromptContextIntoLeadAgent() throws Exception {
-        ThreadRuntimeServiceFixture fixture = fixture(new PromptContextChatModel(), tempDir.resolve("prompt-context"));
-        String threadId = "checkpoint-prompt-context-" + UUID.randomUUID();
-
-        try {
-            fixture.skillRegistryService.replaceSkills(List.of(
-                    new SkillDescriptor("analysis", "Analysis", "General long-form analysis skill.", true)
-            ));
-
-            fixture.threadRuntimeService.createThread(threadId);
-            Path uploadPath = fixture.threadWorkspaceService.getWorkspace(threadId).uploadsRoot().resolve("brief.md");
-            Files.writeString(uploadPath, "# prompt context");
-
-            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(threadId, "use prompt context");
-
-            assertThat(snapshot.messages()).isNotEmpty();
-            assertThat(snapshot.messages().get(snapshot.messages().size() - 1).content())
-                    .contains("skill=true")
-                    .contains("upload=true")
-                    .contains("workspace=true");
         }
         finally {
             fixture.threadRuntimeService.deleteThread(threadId);
@@ -206,6 +179,83 @@ class ThreadRuntimeCheckpointTests {
         }
     }
 
+    @Test
+    void shouldInjectThreadDataAndUploadsIntoModelRequestWithoutPollutingThreadMessages() throws Exception {
+        ThreadRuntimeServiceFixture fixture = fixture(new TurnContextAwareChatModel(), tempDir.resolve("turn-context"));
+        String threadId = "checkpoint-turn-context-" + UUID.randomUUID();
+
+        try {
+            fixture.threadRuntimeService.createThread(threadId);
+            Files.writeString(
+                    fixture.threadWorkspaceService.getWorkspace(threadId).uploadsRoot().resolve("brief.md"),
+                    "# runtime turn context"
+            );
+
+            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(threadId, "use current uploads to continue");
+
+            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+            assertThat(snapshot.messages()).isNotEmpty();
+            assertThat(snapshot.messages().get(0).content()).isEqualTo("use current uploads to continue");
+            assertThat(snapshot.messages().get(snapshot.messages().size() - 1).content())
+                    .contains("threadData=true")
+                    .contains("uploadedFiles=true")
+                    .contains("originalUserPreserved=true");
+        }
+        finally {
+            fixture.threadRuntimeService.deleteThread(threadId);
+        }
+    }
+
+    @Test
+    void shouldAllowLeadAgentToViewImageFromThreadWorkspace() throws Exception {
+        ThreadRuntimeServiceFixture fixture = fixture(new ViewImageChatModel(), tempDir.resolve("view-image"));
+        String threadId = "checkpoint-view-image-" + UUID.randomUUID();
+
+        try {
+            fixture.threadRuntimeService.createThread(threadId);
+            Files.write(
+                    fixture.threadWorkspaceService.getWorkspace(threadId).uploadsRoot().resolve("diagram.png"),
+                    java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC3sAAAAASUVORK5CYII=")
+            );
+
+            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(threadId, "inspect the uploaded diagram");
+
+            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+            assertThat(snapshot.messages().get(snapshot.messages().size() - 1).content())
+                    .contains("imageInjected=true")
+                    .contains("mediaCount=1")
+                    .contains("/uploads/diagram.png");
+        }
+        finally {
+            fixture.threadRuntimeService.deleteThread(threadId);
+        }
+    }
+
+    @Test
+    void shouldAllowLeadAgentToDiscoverDeferredToolsViaToolSearch() throws Exception {
+        ThreadRuntimeServiceFixture fixture = fixture(new DeferredToolSearchChatModel(), tempDir.resolve("deferred-tools"));
+        String threadId = "checkpoint-deferred-tools-" + UUID.randomUUID();
+
+        try {
+            fixture.threadRuntimeService.createThread(threadId);
+            Files.writeString(
+                    fixture.threadWorkspaceService.getWorkspace(threadId).uploadsRoot().resolve("notes.md"),
+                    "# deferred tool search"
+            );
+
+            ThreadStateSnapshot snapshot = fixture.threadRuntimeService.runThread(threadId, "find the deferred file tools and use them");
+
+            assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+            assertThat(snapshot.messages().get(snapshot.messages().size() - 1).content())
+                    .contains("deferredSearch=true")
+                    .contains("list_thread_files")
+                    .contains("/uploads/notes.md");
+        }
+        finally {
+            fixture.threadRuntimeService.deleteThread(threadId);
+        }
+    }
+
     private ThreadRuntimeServiceFixture fixture(ChatModel chatModel, Path rootDir) {
         ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
         workspaceProperties.setBaseDir(rootDir.resolve("threads"));
@@ -230,6 +280,11 @@ class ThreadRuntimeCheckpointTests {
                 uploadService,
                 skillRegistryService
         );
+        RuntimeDeferredToolService runtimeDeferredToolService = new RuntimeDeferredToolService(
+                threadWorkspaceService,
+                new ObjectMapper()
+        );
+        runtimeLeadAgentPromptService.setRuntimeDeferredToolService(runtimeDeferredToolService);
         RuntimeCheckpointProperties runtimeCheckpointProperties = new RuntimeCheckpointProperties();
         runtimeCheckpointProperties.setBaseDir(rootDir.resolve("checkpoints"));
         RuntimeCheckpointService runtimeCheckpointService = new RuntimeCheckpointService(runtimeCheckpointProperties);
@@ -261,6 +316,7 @@ class ThreadRuntimeCheckpointTests {
                 new PostRunGenerationService(),
                 runtimeCheckpointService
         );
+        threadRuntimeService.setRuntimeDeferredToolService(runtimeDeferredToolService);
         return new ThreadRuntimeServiceFixture(
                 threadRuntimeService,
                 runtimeCheckpointService,
@@ -344,27 +400,6 @@ class ThreadRuntimeCheckpointTests {
         }
     }
 
-    private static final class PromptContextChatModel implements ChatModel {
-
-        @Override
-        public ChatResponse call(Prompt prompt) {
-            List<Message> messages = prompt.getInstructions();
-            String systemPrompt = messages.stream()
-                    .filter(SystemMessage.class::isInstance)
-                    .map(SystemMessage.class::cast)
-                    .map(SystemMessage::getText)
-                    .reduce((left, right) -> left + "\n" + right)
-                    .orElse("");
-
-            String content = "skill=%s; upload=%s; workspace=%s".formatted(
-                    systemPrompt.contains("Analysis [analysis]"),
-                    systemPrompt.contains("/uploads/brief.md"),
-                    systemPrompt.contains("/workspace")
-            );
-            return new ChatResponse(List.of(new Generation(new AssistantMessage(content))));
-        }
-    }
-
     private static final class ClarificationChatModel implements ChatModel {
 
         @Override
@@ -395,6 +430,134 @@ class ThreadRuntimeCheckpointTests {
             return new ChatResponse(List.of(new Generation(
                     new AssistantMessage("clarification_applied=" + latestUserMessage)
             )));
+        }
+    }
+
+    private static final class TurnContextAwareChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            String systemText = messages.stream()
+                    .filter(SystemMessage.class::isInstance)
+                    .map(SystemMessage.class::cast)
+                    .map(SystemMessage::getText)
+                    .reduce((left, right) -> left + "\n" + right)
+                    .orElse("");
+            String latestUserMessage = messages.stream()
+                    .filter(UserMessage.class::isInstance)
+                    .map(UserMessage.class::cast)
+                    .reduce((previous, current) -> current)
+                    .map(UserMessage::getText)
+                    .orElse("");
+
+            String content = "threadData=%s; uploadedFiles=%s; originalUserPreserved=%s".formatted(
+                    systemText.contains("<thread_data>"),
+                    systemText.contains("<uploaded_files>") && systemText.contains("/uploads/brief.md"),
+                    latestUserMessage.contains("use current uploads to continue")
+            );
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(content))));
+        }
+    }
+
+    private static final class ViewImageChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<ToolResponseMessage> toolResponses = messages.stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .toList();
+
+            if (toolResponses.isEmpty()) {
+                AssistantMessage toolCallMessage = AssistantMessage.builder()
+                        .content("Load the image first")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "view-image-1",
+                                "function",
+                                "view_image",
+                                "{\"path\":\"/uploads/diagram.png\"}"
+                        )))
+                        .build();
+                return new ChatResponse(List.of(new Generation(toolCallMessage)));
+            }
+
+            UserMessage injectedImageMessage = messages.stream()
+                    .filter(UserMessage.class::isInstance)
+                    .map(UserMessage.class::cast)
+                    .filter(message -> message.getText() != null && message.getText().contains("Here are the images you've viewed:"))
+                    .findFirst()
+                    .orElseThrow();
+
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "imageInjected=true; mediaCount=%d; content=%s".formatted(
+                            injectedImageMessage.getMedia().size(),
+                            injectedImageMessage.getText()
+                    )
+            ))));
+        }
+    }
+
+    private static final class DeferredToolSearchChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<ToolResponseMessage> toolResponses = messages.stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .toList();
+
+            if (toolResponses.isEmpty()) {
+                AssistantMessage toolCallMessage = AssistantMessage.builder()
+                        .content("Search deferred tools first")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "tool-search-1",
+                                "function",
+                                "tool_search",
+                                "{\"query\":\"select:list_thread_files\"}"
+                        )))
+                        .build();
+                return new ChatResponse(List.of(new Generation(toolCallMessage)));
+            }
+
+            boolean hasToolSearchResponse = toolResponses.stream()
+                    .flatMap(response -> response.getResponses().stream())
+                    .anyMatch(response -> "tool_search".equals(response.name()));
+            boolean hasListFilesResponse = toolResponses.stream()
+                    .flatMap(response -> response.getResponses().stream())
+                    .anyMatch(response -> "list_thread_files".equals(response.name()));
+
+            if (hasToolSearchResponse && !hasListFilesResponse) {
+                AssistantMessage toolCallMessage = AssistantMessage.builder()
+                        .content("Now use the deferred tool")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "list-files-1",
+                                "function",
+                                "list_thread_files",
+                                "{\"area\":\"uploads\"}"
+                        )))
+                        .build();
+                return new ChatResponse(List.of(new Generation(toolCallMessage)));
+            }
+
+            String toolSearchPayload = toolResponses.stream()
+                    .flatMap(response -> response.getResponses().stream())
+                    .filter(response -> "tool_search".equals(response.name()))
+                    .map(ToolResponseMessage.ToolResponse::responseData)
+                    .findFirst()
+                    .orElse("");
+            String listFilesPayload = toolResponses.stream()
+                    .flatMap(response -> response.getResponses().stream())
+                    .filter(response -> "list_thread_files".equals(response.name()))
+                    .map(ToolResponseMessage.ToolResponse::responseData)
+                    .findFirst()
+                    .orElse("");
+
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "deferredSearch=true; schema=%s; files=%s".formatted(toolSearchPayload, listFilesPayload)
+            ))));
         }
     }
 }

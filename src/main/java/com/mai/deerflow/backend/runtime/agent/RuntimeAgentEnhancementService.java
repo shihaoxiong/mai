@@ -55,6 +55,15 @@ public class RuntimeAgentEnhancementService {
     }
 
     /**
+     * 返回 runtime lead agent 默认启用的模型前上下文注入拦截器。
+     */
+    public List<Interceptor> supplementalInterceptors() {
+        return List.of(
+                new RuntimeViewImageInterceptor(objectMapper)
+        );
+    }
+
+    /**
      * 创建摘要 hook。
      */
     public SummarizationHook summarizationHook(ChatModel model,
