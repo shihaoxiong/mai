@@ -31,7 +31,6 @@
 
 ## Runtime Persistence
 
-- runtime graph checkpoint 默认落在 `data/checkpoints/runtime-graph/`
 - lead agent 会话 checkpoint 默认落在 `data/checkpoints/lead-agent/`
-- `GET /api/threads/{threadId}` 当前直接基于 runtime checkpoint 投影线程展示态
-- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 runtime checkpoint 中
+- `GET /api/threads/{threadId}` 当前直接基于 lead agent state 投影线程展示态
+- 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 lead agent checkpoint 中

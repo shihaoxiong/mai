@@ -9,8 +9,8 @@ import java.nio.file.Paths;
 /**
  * runtime checkpoint 的目录配置。
  *
- * 当前把 outer runtime graph 和 lead agent 的 checkpoint
- * 都放在独立目录中，避免不同运行时层级互相污染。
+ * 当前主链路统一使用 lead agent checkpoint，
+ * 目录根位置仍保持可配置，便于本地开发和后续替换存储实现。
  */
 public class RuntimeCheckpointProperties {
 

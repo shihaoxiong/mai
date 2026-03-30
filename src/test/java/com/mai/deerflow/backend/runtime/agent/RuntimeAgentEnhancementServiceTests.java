@@ -14,9 +14,9 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
-
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -76,6 +76,64 @@ class RuntimeAgentEnhancementServiceTests {
         assertThat(messageTexts).anyMatch(text -> text.contains("Conversation summary:"));
     }
 
+    @Test
+    void toolCallSafetyInterceptorShouldTruncateExcessTaskCalls() throws Exception {
+        AtomicInteger taskInvocationCount = new AtomicInteger();
+        var taskTool = org.springframework.ai.tool.function.FunctionToolCallback
+                .builder("task", (TaskRequest request) -> {
+                    taskInvocationCount.incrementAndGet();
+                    return "task-result:" + request.title();
+                })
+                .description("Synthetic task tool for testing.")
+                .inputType(TaskRequest.class)
+                .build();
+
+        var agent = leadAgentFactory.create(LeadAgentDefinition.builder(new ManyTaskCallsChatModel())
+                .name("task-limit-agent")
+                .instruction("Limit task fan-out.")
+                .tools(List.of(taskTool))
+                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .saver(new MemorySaver())
+                .build());
+
+        AssistantMessage assistantMessage = agent.call("launch many tasks");
+
+        assertThat(taskInvocationCount.get()).isEqualTo(3);
+        assertThat(assistantMessage.getText()).isEqualTo("taskResponses=3");
+    }
+
+    @Test
+    void toolCallSafetyInterceptorShouldForceStopRepeatedToolLoops() throws Exception {
+        AtomicInteger echoInvocationCount = new AtomicInteger();
+        var echoTool = org.springframework.ai.tool.function.FunctionToolCallback
+                .builder("echo", (EchoRequest request) -> {
+                    echoInvocationCount.incrementAndGet();
+                    return "echo:" + request.value();
+                })
+                .description("Synthetic loop tool for testing.")
+                .inputType(EchoRequest.class)
+                .build();
+
+        var agent = leadAgentFactory.create(LeadAgentDefinition.builder(new RepeatingToolLoopChatModel())
+                .name("loop-guard-agent")
+                .instruction("Stop repeated tool loops.")
+                .tools(List.of(echoTool))
+                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .saver(new MemorySaver())
+                .build());
+
+        AssistantMessage assistantMessage = agent.call("repeat the same tool call");
+
+        assertThat(echoInvocationCount.get()).isEqualTo(4);
+        assertThat(assistantMessage.getText()).contains(RuntimeToolCallSafetyInterceptor.FORCED_STOP_MESSAGE);
+    }
+
+    record TaskRequest(String title) {
+    }
+
+    record EchoRequest(String value) {
+    }
+
     private static final class PlanningChatModel implements ChatModel {
 
         @Override
@@ -130,6 +188,65 @@ class RuntimeAgentEnhancementServiceTests {
                     : "plain-response:" + lastUserMessage;
 
             return new ChatResponse(List.of(new Generation(new AssistantMessage(response))));
+        }
+    }
+
+    private static final class ManyTaskCallsChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<ToolResponseMessage> toolResponses = messages.stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .toList();
+
+            if (toolResponses.isEmpty()) {
+                return new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                        .content("Launch four tasks")
+                        .toolCalls(List.of(
+                                new AssistantMessage.ToolCall("task-1", "function", "task", "{\"title\":\"one\"}"),
+                                new AssistantMessage.ToolCall("task-2", "function", "task", "{\"title\":\"two\"}"),
+                                new AssistantMessage.ToolCall("task-3", "function", "task", "{\"title\":\"three\"}"),
+                                new AssistantMessage.ToolCall("task-4", "function", "task", "{\"title\":\"four\"}")
+                        ))
+                        .build())));
+            }
+
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "taskResponses=" + toolResponses.get(0).getResponses().size()
+            ))));
+        }
+    }
+
+    private static final class RepeatingToolLoopChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<AssistantMessage> assistantMessages = messages.stream()
+                    .filter(AssistantMessage.class::isInstance)
+                    .map(AssistantMessage.class::cast)
+                    .toList();
+            AssistantMessage lastAssistantMessage = assistantMessages.isEmpty()
+                    ? null
+                    : assistantMessages.get(assistantMessages.size() - 1);
+            if (lastAssistantMessage != null
+                    && !lastAssistantMessage.hasToolCalls()
+                    && lastAssistantMessage.getText() != null
+                    && lastAssistantMessage.getText().contains(RuntimeToolCallSafetyInterceptor.FORCED_STOP_MESSAGE)) {
+                return new ChatResponse(List.of(new Generation(lastAssistantMessage)));
+            }
+
+            return new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                    .content("Repeat same tool call")
+                    .toolCalls(List.of(new AssistantMessage.ToolCall(
+                            "echo-repeat",
+                            "function",
+                            "echo",
+                            "{\"value\":\"same\"}"
+                    )))
+                    .build())));
         }
     }
 }

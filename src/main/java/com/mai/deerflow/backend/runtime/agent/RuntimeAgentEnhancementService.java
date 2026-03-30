@@ -49,6 +49,7 @@ public class RuntimeAgentEnhancementService {
     public List<Interceptor> defaultInterceptors() {
         return List.of(
                 TodoListInterceptor.builder().build(),
+                new RuntimeToolCallSafetyInterceptor(),
                 new AskClarificationToolInterceptor(objectMapper)
         );
     }

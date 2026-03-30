@@ -216,6 +216,7 @@ flowchart TD
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
 - Runtime lead agent 已接入 `ask_clarification` 工具与对应拦截器，可直接把 run 转入 `WAITING_CLARIFICATION`
+- Runtime lead agent 已接入 tool-call 安全拦截器，当前会限制单轮 `task` fan-out，并在重复 tool-call 循环达到阈值时强制停下
 - 已提供 `RuntimeLeadAgentPromptService`，按线程聚合 skills、uploads、workspace 与运行规则，并在 lead agent 创建时注入 system prompt
 - `write_todos` 工具结果当前会同步投影到 lead agent checkpoint 的 `todos` 状态，供线程查询与恢复直接复用
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`

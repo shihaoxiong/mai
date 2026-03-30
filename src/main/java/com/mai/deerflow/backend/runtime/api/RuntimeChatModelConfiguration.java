@@ -1,6 +1,7 @@
 package com.mai.deerflow.backend.runtime.api;
 
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,7 +33,7 @@ public class RuntimeChatModelConfiguration {
         }
 
         if (candidateBeanNames.size() == 1) {
-            return beanFactory.getBean(candidateBeanNames.get(0), ChatModel.class);
+            return resolveOrFallback(beanFactory, candidateBeanNames.get(0));
         }
 
         List<String> primaryBeanNames = candidateBeanNames.stream()
@@ -41,10 +42,19 @@ public class RuntimeChatModelConfiguration {
                 .toList();
 
         if (primaryBeanNames.size() == 1) {
-            return beanFactory.getBean(primaryBeanNames.get(0), ChatModel.class);
+            return resolveOrFallback(beanFactory, primaryBeanNames.get(0));
         }
 
         throw new IllegalStateException("Multiple ChatModel beans found: " + candidateBeanNames
                 + ". Please keep only one model bean or mark exactly one as primary.");
+    }
+
+    private ChatModel resolveOrFallback(ConfigurableListableBeanFactory beanFactory, String beanName) {
+        try {
+            return beanFactory.getBean(beanName, ChatModel.class);
+        }
+        catch (BeansException exception) {
+            return new FallbackChatModelConfiguration().fallbackChatModel();
+        }
     }
 }

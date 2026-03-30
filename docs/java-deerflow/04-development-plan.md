@@ -186,6 +186,10 @@
   产出：`ask_clarification` 工具、受控中断映射，以及基于现有 approval/checkpoint 的恢复执行链路。
   完成标准：lead agent 可主动进入 `WAITING_CLARIFICATION`，线程查询与恢复继续统一复用 lead agent checkpoint，不新增 outer graph。
 
+- [x] P3-12 补齐 Runtime Tool-Call 安全护栏
+  产出：`task` 调用限流与重复 tool-call 循环硬停拦截器。
+  完成标准：单轮响应中的并发 `task` 调用数受控，重复工具循环不会无限消耗模型轮次。
+
 ### P4：生产化与稳定性
 
 - [ ] P4-01 实现 `ContainerSandboxProvider`
