@@ -16,6 +16,7 @@ import com.mai.deerflow.backend.runtime.agent.RuntimeDeferredToolService;
 import com.mai.deerflow.backend.runtime.agent.RuntimeLeadAgentPromptService;
 import com.mai.deerflow.backend.runtime.agent.RuntimeTodoReminderInterceptor;
 import com.mai.deerflow.backend.runtime.agent.RuntimeThreadContextInterceptor;
+import com.mai.deerflow.backend.runtime.agent.RuntimeToolExecutionExceptionProcessor;
 import com.mai.deerflow.backend.runtime.agent.ViewImageRequest;
 import com.mai.deerflow.backend.runtime.agent.ViewedImageData;
 import com.mai.deerflow.backend.runtime.artifact.ArtifactService;
@@ -35,6 +36,8 @@ import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionResult;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
+import com.mai.deerflow.backend.runtime.model.ModelDescriptor;
+import com.mai.deerflow.backend.runtime.model.ModelRegistryService;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationResult;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationService;
 import com.mai.deerflow.backend.runtime.state.RunStateMachine;
@@ -53,6 +56,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
+import org.springframework.ai.model.tool.DefaultToolCallingChatOptions;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -97,6 +101,7 @@ public class ThreadRuntimeService {
     private final PostRunGenerationService postRunGenerationService;
     private final RuntimeCheckpointService runtimeCheckpointService;
     private RuntimeDeferredToolService runtimeDeferredToolService;
+    private ModelRegistryService modelRegistryService;
     private final ConcurrentMap<String, ThreadStateSnapshot> threadSnapshots = new ConcurrentHashMap<>();
 
     public ThreadRuntimeService(ThreadWorkspaceService threadWorkspaceService,
@@ -134,6 +139,11 @@ public class ThreadRuntimeService {
     @Autowired(required = false)
     public void setRuntimeDeferredToolService(RuntimeDeferredToolService runtimeDeferredToolService) {
         this.runtimeDeferredToolService = runtimeDeferredToolService;
+    }
+
+    @Autowired(required = false)
+    public void setModelRegistryService(ModelRegistryService modelRegistryService) {
+        this.modelRegistryService = modelRegistryService;
     }
 
     /**
@@ -210,6 +220,31 @@ public class ThreadRuntimeService {
                                          boolean approvalRequired,
                                          String approvalReason,
                                          String userId) {
+        return runThread(threadId, message, approvalRequired, approvalReason, userId, RequestedRuntimeRunOptions.empty());
+    }
+
+    /**
+     * 执行一次线程运行，并允许调用方预先指定 runId，便于 run 级 SSE 先建订阅再启动执行。
+     */
+    public ThreadStateSnapshot runThread(String threadId,
+                                         String message,
+                                         boolean approvalRequired,
+                                         String approvalReason,
+                                         String userId,
+                                         RequestedRuntimeRunOptions requestedRunOptions) {
+        return runThread(threadId, message, approvalRequired, approvalReason, userId, requestedRunOptions, null);
+    }
+
+    /**
+     * 执行一次线程运行，并允许调用方预先指定 runId，便于 run 级 SSE 先建订阅再启动执行。
+     */
+    public ThreadStateSnapshot runThread(String threadId,
+                                         String message,
+                                         boolean approvalRequired,
+                                         String approvalReason,
+                                         String userId,
+                                         RequestedRuntimeRunOptions requestedRunOptions,
+                                         String requestedRunId) {
         if (message == null || message.isBlank()) {
             throw new IllegalArgumentException("message must not be blank");
         }
@@ -217,13 +252,16 @@ public class ThreadRuntimeService {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         ThreadStateSnapshot currentSnapshot = currentSnapshot(threadId, workspace);
         ThreadContextMetadata threadContext = resolveThreadContext(threadId, userId);
-        String runId = UUID.randomUUID().toString();
+        RuntimeRunOptions runOptions = resolveRunOptions(requestedRunOptions);
+        String runId = requestedRunId == null || requestedRunId.isBlank()
+                ? UUID.randomUUID().toString()
+                : requestedRunId.trim();
 
         if (approvalRequired) {
-            return createPendingApproval(threadId, runId, message, approvalReason, currentSnapshot, workspace);
+            return createPendingApproval(threadId, runId, message, approvalReason, currentSnapshot, workspace, runOptions);
         }
 
-        return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL, threadContext);
+        return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL, threadContext, runOptions);
     }
 
     /**
@@ -278,7 +316,8 @@ public class ThreadRuntimeService {
                     pendingApproval.message(),
                     pendingApproval.reason(),
                     ApprovalStatus.NEEDS_CLARIFICATION,
-                    clarificationRequest
+                    clarificationRequest,
+                    pendingApproval.runOptions()
             );
             persistPendingApproval(clarificationApproval);
 
@@ -308,7 +347,8 @@ public class ThreadRuntimeService {
                 pendingApproval.message(),
                 pendingApproval.reason(),
                 ApprovalStatus.APPROVED,
-                request.comment()
+                request.comment(),
+                pendingApproval.runOptions()
         );
         persistPendingApproval(approvedApproval);
 
@@ -373,7 +413,8 @@ public class ThreadRuntimeService {
                 pendingApproval.runId(),
                 currentSnapshot,
                 resumeApprovalState,
-                resolveThreadContext(threadId, null)
+                resolveThreadContext(threadId, null),
+                effectiveRunOptions(pendingApproval.runOptions())
         );
         deletePendingApproval(threadId);
         return resumedSnapshot;
@@ -397,7 +438,8 @@ public class ThreadRuntimeService {
                                                       String message,
                                                       String approvalReason,
                                                       ThreadStateSnapshot currentSnapshot,
-                                                      ThreadWorkspace workspace) {
+                                                      ThreadWorkspace workspace,
+                                                      RuntimeRunOptions runOptions) {
         String approvalId = UUID.randomUUID().toString();
         String reason = approvalReason == null || approvalReason.isBlank()
                 ? "Manual approval required"
@@ -410,7 +452,8 @@ public class ThreadRuntimeService {
                 message,
                 reason,
                 ApprovalStatus.WAITING,
-                null
+                null,
+                runOptions
         );
 
         ThreadStateSnapshot waitingSnapshot = new ThreadStateSnapshot(
@@ -442,10 +485,11 @@ public class ThreadRuntimeService {
                                            String runId,
                                            ThreadStateSnapshot currentSnapshot,
                                            ApprovalState approvalState,
-                                           ThreadContextMetadata threadContext) {
+                                           ThreadContextMetadata threadContext,
+                                           RuntimeRunOptions runOptions) {
         ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
         RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
-        var leadAgent = runtimeLeadAgent(threadId, runId);
+        var leadAgent = runtimeLeadAgent(threadId, runId, runOptions, threadContext == null ? null : threadContext.userId());
 
         ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING, approvalState);
         threadSnapshots.put(threadId, runningSnapshot);
@@ -502,7 +546,8 @@ public class ThreadRuntimeService {
                         runningSnapshot,
                         workspace,
                         runtimeConfig,
-                        clarificationException
+                        clarificationException,
+                        runOptions
                 );
             }
 
@@ -546,8 +591,18 @@ public class ThreadRuntimeService {
     }
 
     private com.alibaba.cloud.ai.graph.agent.ReactAgent runtimeLeadAgent(String threadId, String runId) {
+        return runtimeLeadAgent(threadId, runId, RuntimeRunOptions.defaults(), null);
+    }
+
+    private com.alibaba.cloud.ai.graph.agent.ReactAgent runtimeLeadAgent(String threadId,
+                                                                         String runId,
+                                                                         RuntimeRunOptions runOptions,
+                                                                         String userId) {
+        RuntimeRunOptions effectiveRunOptions = effectiveRunOptions(runOptions);
         List<ToolCallback> tools = new ArrayList<>();
-        tools.add(subTaskExecutor.taskTool(threadId, runId));
+        if (effectiveRunOptions.subagentEnabled()) {
+            tools.add(subTaskExecutor.taskTool(threadId, runId));
+        }
         tools.add(askClarificationTool());
         tools.add(viewImageTool(threadId));
         List<String> deferredToolNames = List.of();
@@ -565,10 +620,12 @@ public class ThreadRuntimeService {
         com.alibaba.cloud.ai.graph.agent.ReactAgent agent = leadAgentFactory.create(LeadAgentDefinition.builder(chatModel)
                 .name("runtime-lead-agent")
                 .instruction(runtimeLeadAgentPromptService.instruction())
-                .systemPrompt(runtimeLeadAgentPromptService.systemPrompt(threadId))
+                .systemPrompt(runtimeLeadAgentPromptService.systemPrompt(threadId, effectiveRunOptions, userId))
+                .chatOptions(chatOptionsFor(effectiveRunOptions))
                 .tools(tools)
                 .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
-                .interceptors(runtimeInterceptors(threadId, deferredToolNames))
+                .interceptors(runtimeInterceptors(threadId, deferredToolNames, effectiveRunOptions))
+                .toolExecutionExceptionProcessor(new RuntimeToolExecutionExceptionProcessor())
                 .saver(runtimeCheckpointService.leadAgentSaver())
                 .build());
         agent.asNode(false, false);
@@ -576,13 +633,18 @@ public class ThreadRuntimeService {
     }
 
     private List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> runtimeInterceptors(String threadId,
-                                                                                               List<String> deferredToolNames) {
+                                                                                               List<String> deferredToolNames,
+                                                                                               RuntimeRunOptions runOptions) {
+        RuntimeRunOptions effectiveRunOptions = effectiveRunOptions(runOptions);
         List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> interceptors =
-                new ArrayList<>(runtimeAgentEnhancementService.defaultInterceptors());
+                new ArrayList<>(runtimeAgentEnhancementService.defaultInterceptors(effectiveRunOptions));
         interceptors.add(0, new RuntimeThreadContextInterceptor(threadId, runtimeLeadAgentPromptService));
-        interceptors.add(1, new RuntimeTodoReminderInterceptor(threadId, runtimeCheckpointService, runtimeAgentEnhancementService));
+        if (effectiveRunOptions.planModeEnabled()) {
+            interceptors.add(1, new RuntimeTodoReminderInterceptor(threadId, runtimeCheckpointService, runtimeAgentEnhancementService));
+        }
         if (!deferredToolNames.isEmpty()) {
-            interceptors.add(2, new RuntimeDeferredToolFilterInterceptor(deferredToolNames, objectMapper));
+            interceptors.add(effectiveRunOptions.planModeEnabled() ? 2 : 1,
+                    new RuntimeDeferredToolFilterInterceptor(deferredToolNames, objectMapper));
         }
         interceptors.addAll(runtimeAgentEnhancementService.supplementalInterceptors());
         return List.copyOf(interceptors);
@@ -821,7 +883,8 @@ public class ThreadRuntimeService {
                                                       ThreadStateSnapshot currentSnapshot,
                                                       ThreadWorkspace workspace,
                                                       RunnableConfig runtimeConfig,
-                                                      AgentClarificationRequestedException clarificationException) {
+                                                      AgentClarificationRequestedException clarificationException,
+                                                      RuntimeRunOptions runOptions) {
         String approvalId = UUID.randomUUID().toString();
         String clarificationPrompt = clarificationException.displayMessage();
         Optional<OverAllState> state = safeState(runtimeConfig);
@@ -843,7 +906,8 @@ public class ThreadRuntimeService {
                 message,
                 clarificationPrompt,
                 ApprovalStatus.NEEDS_CLARIFICATION,
-                null
+                null,
+                runOptions
         );
 
         ThreadStateSnapshot clarificationSnapshot = new ThreadStateSnapshot(
@@ -1091,6 +1155,75 @@ public class ThreadRuntimeService {
             return null;
         }
         return userId.trim();
+    }
+
+    private RuntimeRunOptions resolveRunOptions(RequestedRuntimeRunOptions requestedRunOptions) {
+        RequestedRuntimeRunOptions requestedOptions = requestedRunOptions == null
+                ? RequestedRuntimeRunOptions.empty()
+                : requestedRunOptions;
+
+        if (hasText(requestedOptions.reasoningEffort())) {
+            throw new InvalidRunOptionException("reasoningEffort is not supported yet in the current Java runtime. Please omit it for now.");
+        }
+        if (hasText(requestedOptions.agentName())) {
+            throw new InvalidRunOptionException("agentName is not supported yet in the current Java runtime. Please omit it for now.");
+        }
+
+        String modelName = normalizeOptionalUserId(requestedOptions.modelName());
+        if (modelName != null) {
+            validateRequestedModel(modelName);
+        }
+
+        boolean planModeEnabled = requestedOptions.isPlanMode() == null || requestedOptions.isPlanMode();
+        boolean subagentEnabled = requestedOptions.subagentEnabled() == null || requestedOptions.subagentEnabled();
+        int maxConcurrentSubagents = requestedOptions.maxConcurrentSubagents() == null
+                ? RuntimeRunOptions.DEFAULT_MAX_CONCURRENT_SUBAGENTS
+                : requestedOptions.maxConcurrentSubagents();
+        if (maxConcurrentSubagents < 1) {
+            throw new InvalidRunOptionException("maxConcurrentSubagents must be greater than 0.");
+        }
+        if (maxConcurrentSubagents > 8) {
+            throw new InvalidRunOptionException("maxConcurrentSubagents must not be greater than 8 in the current runtime.");
+        }
+
+        return new RuntimeRunOptions(modelName, planModeEnabled, subagentEnabled, maxConcurrentSubagents);
+    }
+
+    private RuntimeRunOptions effectiveRunOptions(RuntimeRunOptions runOptions) {
+        return runOptions == null ? RuntimeRunOptions.defaults() : runOptions;
+    }
+
+    private DefaultToolCallingChatOptions chatOptionsFor(RuntimeRunOptions runOptions) {
+        RuntimeRunOptions effectiveRunOptions = effectiveRunOptions(runOptions);
+        if (!hasText(effectiveRunOptions.modelName())) {
+            return null;
+        }
+
+        DefaultToolCallingChatOptions chatOptions = new DefaultToolCallingChatOptions();
+        chatOptions.setModel(effectiveRunOptions.modelName());
+        return chatOptions;
+    }
+
+    private void validateRequestedModel(String modelName) {
+        if (chatModel instanceof FallbackChatModelConfiguration.FallbackChatModel) {
+            throw new InvalidRunOptionException("modelName requires a real provider-backed runtimeChatModel, but the current runtime is using the fallback chat model.");
+        }
+
+        if (modelRegistryService == null) {
+            return;
+        }
+
+        ModelDescriptor descriptor = modelRegistryService.listModels().stream()
+                .filter(candidate -> candidate.id() != null && candidate.id().equals(modelName))
+                .findFirst()
+                .orElseThrow(() -> new InvalidRunOptionException("Unknown modelName: " + modelName));
+        if (!descriptor.enabled()) {
+            throw new InvalidRunOptionException("Requested model is disabled: " + modelName);
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private ThreadStateSnapshot currentSnapshot(String threadId, ThreadWorkspace workspace) {

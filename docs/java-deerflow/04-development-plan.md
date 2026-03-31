@@ -33,6 +33,7 @@
 - runtime 主链路已经收敛为“`ThreadRuntimeService` 直接调用 lead agent”，不再回退到 outer runtime graph。
 - 线程查询、恢复、审批、todos、messages 当前统一从 lead agent state / checkpoint 投影。
 - 当前唯一 checkpoint 真相源是 lead agent saver；线程本地文件态继续保留在 `workspace / uploads / outputs / metadata/subtasks`。
+- `POST /api/threads/{threadId}/runs` 当前已经支持 run 级 SSE 事件流，不必再额外依赖独立的 outer graph 流式包装层。
 - 接下来的工作重点是继续补齐 lead agent 策略层能力，而不是重建外层 RuntimeGraph。
 
 ## 4. 当前任务列表
@@ -205,7 +206,26 @@
 - [x] P3-16 补齐最小可用 Deferred Tools / Tool Search
   产出：deferred tool 注册表、`tool_search` 工具、deferred tool 过滤拦截器。
   完成标准：lead agent 可先通过 `tool_search` 获取隐藏工具 schema，再在后续轮次调用这些工具。
-  说明：当前 deferred tools 已覆盖本地线程文件工具与真实 stdio MCP 工具；HTTP/SSE MCP transport 后续再补。
+  说明：当前 deferred tools 已覆盖本地线程文件工具与真实 stdio / HTTP SSE / streamable HTTP MCP 工具。
+
+- [x] P3-17 补齐 Tool Error Handling / Dangling Tool Call Patch
+  产出：运行时工具错误转 `ToolResponseMessage`、以及模型调用前的 dangling tool-call 补丁拦截器。
+  完成标准：普通工具异常不会直接打断 lead agent 主链路；恢复或中断后的不完整 tool-call 历史不会再导致下一轮模型调用格式异常。
+
+- [x] P3-18 补齐 run 级 lead agent 运行参数覆盖
+  产出：`model_name / reasoning_effort / is_plan_mode / subagent_enabled / max_concurrent_subagents / agent_name` 等请求级运行参数。
+  完成标准：不改变 lead-agent-only 主链路的前提下，单次 run 可按请求覆盖 lead agent 行为。
+  说明：当前已支持 `model_name / is_plan_mode / subagent_enabled / max_concurrent_subagents`，并会把 run options 持久化到待审批上下文里；`reasoning_effort / agent_name` 暂时仍显式拒绝，不做静默忽略。
+
+- [x] P3-19 增强长期记忆为结构化队列更新链路
+  产出：memory update queue、debounce、结构化 memory updater 与更接近 DeerFlow 的 memory 注入格式。
+  完成标准：长期记忆更新不再是单轮启发式 facts-only 抽取，且不会把上传文件这类线程临时信息写进长期记忆。
+  说明：当前已引入 `StructuredMemoryProfile + MemoryProfileStore + MemoryUpdateQueue`；runtime 仍经由 `MemoryExtractorJob.schedule()` 入口调度，但底层已切换为 debounce 队列与结构化 profile 更新。
+
+- [x] P3-20 增强 Lead Agent Prompt 对齐 DeerFlow agents 能力
+  产出：更完整的 skill progressive loading、agent soul、research citation/output 规则与 memory system prompt 注入。
+  完成标准：lead agent prompt/context 与 DeerFlow agents 的关键行为约束更一致，但不回退到 outer graph。
+  说明：当前 prompt 已支持 `agent soul`、结构化长期记忆 `<memory>` 段、带 location 的技能清单与 progressive loading 说明，以及研究型回答的 citation/output 规则。
 
 ### P4：生产化与稳定性
 

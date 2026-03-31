@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
 import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.todolist.TodoListInterceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mai.deerflow.backend.runtime.api.RuntimeRunOptions;
 import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.TodoStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadMessage;
@@ -47,11 +48,26 @@ public class RuntimeAgentEnhancementService {
      * 返回 runtime lead agent 默认启用的 interceptor 列表。
      */
     public List<Interceptor> defaultInterceptors() {
-        return List.of(
-                TodoListInterceptor.builder().build(),
-                new RuntimeToolCallSafetyInterceptor(),
-                new AskClarificationToolInterceptor(objectMapper)
-        );
+        return defaultInterceptors(RuntimeRunOptions.defaults());
+    }
+
+    /**
+     * 返回 runtime lead agent 默认启用的 interceptor 列表，并按 run 级选项裁剪能力。
+     */
+    public List<Interceptor> defaultInterceptors(RuntimeRunOptions runOptions) {
+        RuntimeRunOptions effectiveRunOptions = runOptions == null ? RuntimeRunOptions.defaults() : runOptions;
+        List<Interceptor> interceptors = new ArrayList<>();
+        if (effectiveRunOptions.planModeEnabled()) {
+            interceptors.add(TodoListInterceptor.builder().build());
+        }
+        interceptors.add(new RuntimeDanglingToolCallInterceptor());
+        interceptors.add(new RuntimeToolCallSafetyInterceptor(
+                effectiveRunOptions.maxConcurrentSubagents(),
+                5
+        ));
+        interceptors.add(new RuntimeToolErrorHandlingInterceptor());
+        interceptors.add(new AskClarificationToolInterceptor(objectMapper));
+        return List.copyOf(interceptors);
     }
 
     /**

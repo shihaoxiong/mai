@@ -210,6 +210,33 @@ class RuntimeAgentEnhancementServiceTests {
                 .contains("/uploads/sample.png");
     }
 
+    @Test
+    void toolErrorHandlingInterceptorShouldConvertToolFailureIntoToolResponse() throws Exception {
+        var brokenTool = FunctionToolCallback
+                .builder("broken_tool", (BrokenToolRequest request) -> {
+                    throw new IllegalStateException("simulated tool failure for " + request.input());
+                })
+                .description("Synthetic failing tool for testing.")
+                .inputType(BrokenToolRequest.class)
+                .build();
+
+        var agent = leadAgentFactory.create(LeadAgentDefinition.builder(new ToolFailureAwareChatModel())
+                .name("tool-error-agent")
+                .instruction("Continue after tool failure.")
+                .tools(List.of(brokenTool))
+                .interceptors(runtimeAgentEnhancementService.defaultInterceptors())
+                .toolExecutionExceptionProcessor(new RuntimeToolExecutionExceptionProcessor())
+                .saver(new MemorySaver())
+                .build());
+
+        AssistantMessage assistantMessage = agent.call("use the broken tool");
+
+        assertThat(assistantMessage.getText())
+                .contains("toolErrorHandled=true")
+                .contains("broken_tool")
+                .contains("simulated tool failure");
+    }
+
     record TaskRequest(String title) {
     }
 
@@ -217,6 +244,9 @@ class RuntimeAgentEnhancementServiceTests {
     }
 
     record ViewImageRequest(String path) {
+    }
+
+    record BrokenToolRequest(String input) {
     }
 
     private static final class PlanningChatModel implements ChatModel {
@@ -387,6 +417,38 @@ class RuntimeAgentEnhancementServiceTests {
                     "imageInjected=true; mediaCount=%d; content=%s".formatted(
                             injectedImageMessage.getMedia().size(),
                             injectedImageMessage.getText()
+                    )
+            ))));
+        }
+    }
+
+    private static final class ToolFailureAwareChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            List<ToolResponseMessage> toolResponses = messages.stream()
+                    .filter(ToolResponseMessage.class::isInstance)
+                    .map(ToolResponseMessage.class::cast)
+                    .toList();
+
+            if (toolResponses.isEmpty()) {
+                return new ChatResponse(List.of(new Generation(AssistantMessage.builder()
+                        .content("Call the failing tool first")
+                        .toolCalls(List.of(new AssistantMessage.ToolCall(
+                                "broken-call-1",
+                                "function",
+                                "broken_tool",
+                                "{\"input\":\"alpha\"}"
+                        )))
+                        .build())));
+            }
+
+            ToolResponseMessage.ToolResponse toolResponse = toolResponses.get(0).getResponses().get(0);
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(
+                    "toolErrorHandled=%s; payload=%s".formatted(
+                            toolResponse.responseData().contains("Error: Tool 'broken_tool' failed"),
+                            toolResponse.responseData()
                     )
             ))));
         }

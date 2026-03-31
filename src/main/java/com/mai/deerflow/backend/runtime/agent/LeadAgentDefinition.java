@@ -5,7 +5,9 @@ import com.alibaba.cloud.ai.graph.agent.hook.Hook;
 import com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.execution.ToolExecutionExceptionProcessor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,9 +24,11 @@ public record LeadAgentDefinition(
         String instruction,
         String systemPrompt,
         ChatModel model,
+        ChatOptions chatOptions,
         List<ToolCallback> tools,
         List<Hook> hooks,
         List<Interceptor> interceptors,
+        ToolExecutionExceptionProcessor toolExecutionExceptionProcessor,
         BaseCheckpointSaver saver,
         CompileConfig compileConfig,
         boolean releaseThread
@@ -50,9 +54,11 @@ public record LeadAgentDefinition(
         private String description = "";
         private String instruction = "";
         private String systemPrompt = "";
+        private ChatOptions chatOptions;
         private final List<ToolCallback> tools = new ArrayList<>();
         private final List<Hook> hooks = new ArrayList<>();
         private final List<Interceptor> interceptors = new ArrayList<>();
+        private ToolExecutionExceptionProcessor toolExecutionExceptionProcessor;
         private BaseCheckpointSaver saver;
         private CompileConfig compileConfig;
         private boolean releaseThread;
@@ -78,6 +84,11 @@ public record LeadAgentDefinition(
 
         public Builder systemPrompt(String systemPrompt) {
             this.systemPrompt = systemPrompt;
+            return this;
+        }
+
+        public Builder chatOptions(ChatOptions chatOptions) {
+            this.chatOptions = chatOptions;
             return this;
         }
 
@@ -114,6 +125,11 @@ public record LeadAgentDefinition(
             return this;
         }
 
+        public Builder toolExecutionExceptionProcessor(ToolExecutionExceptionProcessor toolExecutionExceptionProcessor) {
+            this.toolExecutionExceptionProcessor = toolExecutionExceptionProcessor;
+            return this;
+        }
+
         public Builder saver(BaseCheckpointSaver saver) {
             this.saver = saver;
             return this;
@@ -136,9 +152,11 @@ public record LeadAgentDefinition(
                     instruction,
                     systemPrompt,
                     model,
+                    chatOptions,
                     tools,
                     hooks,
                     interceptors,
+                    toolExecutionExceptionProcessor,
                     saver,
                     compileConfig,
                     releaseThread

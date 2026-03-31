@@ -7,6 +7,14 @@ public record SkillDescriptor(
         String id,
         String name,
         String description,
-        boolean enabled
+        boolean enabled,
+        String location
 ) {
+
+    public SkillDescriptor(String id,
+                           String name,
+                           String description,
+                           boolean enabled) {
+        this(id, name, description, enabled, null);
+    }
 }

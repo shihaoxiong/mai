@@ -45,6 +45,10 @@ class MemoryExtractorJobTests {
                 .contains("Please keep comments in Chinese and prefer small refactors", "I use Java 17 locally");
         assertThat(extractedFacts.get(2).content()).startsWith("当前任务上下文：");
         assertThat(memoryStore.list("memory-user")).hasSize(3);
+        assertThat(memoryStore.loadProfile("memory-user").user().topOfMind().summary())
+                .contains("memory extraction demo");
+        assertThat(memoryStore.loadProfile("memory-user").history().longTermBackground().summary())
+                .contains("I use Java 17 locally");
     }
 
     @Test

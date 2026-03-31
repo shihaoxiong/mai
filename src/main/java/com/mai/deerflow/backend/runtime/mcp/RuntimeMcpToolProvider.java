@@ -3,25 +3,29 @@ package com.mai.deerflow.backend.runtime.mcp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.json.McpJsonMapper;
-import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpClientTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.net.http.HttpRequest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
  * 运行时 MCP 工具提供器。
  *
  * 当前首版能力：
- * 1. 根据平台层 `McpServerConfig` 建立 stdio MCP 连接
+ * 1. 根据平台层 `McpServerConfig` 建立 stdio / HTTP(SSE) / streamable HTTP MCP 连接
  * 2. 把远端 MCP tools 转换成 Spring AI `ToolCallback`
  * 3. 依据配置快照做最小缓存与失效
  */
@@ -93,10 +97,19 @@ public class RuntimeMcpToolProvider implements AutoCloseable {
     }
 
     private LoadedMcpServer loadServer(McpServerConfig config) {
-        if (!"stdio".equalsIgnoreCase(config.transport())) {
-            logger.warn("Unsupported MCP transport '{}' for server {}, current runtime only supports stdio", config.transport(), config.id());
-            return null;
-        }
+        String transport = normalizeTransport(config.transport());
+        return switch (transport) {
+            case "stdio" -> loadStdioServer(config);
+            case "sse" -> loadSseServer(config);
+            case "streamable-http", "streamable_http", "http" -> loadStreamableHttpServer(config);
+            default -> {
+                logger.warn("Unsupported MCP transport '{}' for server {}", config.transport(), config.id());
+                yield null;
+            }
+        };
+    }
+
+    private LoadedMcpServer loadStdioServer(McpServerConfig config) {
         if (config.command() == null || config.command().isBlank()) {
             logger.warn("Skipping MCP server {} because command is blank", config.id());
             return null;
@@ -110,25 +123,78 @@ public class RuntimeMcpToolProvider implements AutoCloseable {
             StdioClientTransport transport = new StdioClientTransport(serverParameters, mcpJsonMapper);
             transport.setStdErrorHandler(message -> {
             });
-
-            McpSyncClient client = McpClient.sync(transport)
-                    .requestTimeout(MCP_REQUEST_TIMEOUT)
-                    .initializationTimeout(MCP_INITIALIZATION_TIMEOUT)
-                    .build();
-            client.initialize();
-
-            List<ToolCallback> tools = client.listTools().tools().stream()
-                    .map(tool -> RuntimeMcpToolCallback.from(config.id(), client, mcpJsonMapper, tool))
-                    .map(ToolCallback.class::cast)
-                    .toList();
-
-            logger.info("Loaded {} MCP tools from server {}", tools.size(), config.id());
-            return new LoadedMcpServer(config.id(), transport, client, tools);
+            return initializeServer(config.id(), transport);
         }
         catch (Exception exception) {
             logger.warn("Failed to initialize MCP server {}", config.id(), exception);
             return null;
         }
+    }
+
+    private LoadedMcpServer loadSseServer(McpServerConfig config) {
+        if (!hasText(config.url())) {
+            logger.warn("Skipping MCP server {} because url is blank", config.id());
+            return null;
+        }
+
+        try {
+            HttpClientSseClientTransport.Builder builder = HttpClientSseClientTransport.builder(config.url().trim())
+                    .jsonMapper(mcpJsonMapper)
+                    .connectTimeout(MCP_INITIALIZATION_TIMEOUT)
+                    .requestBuilder(httpRequestBuilder(config));
+            if (hasText(config.sseEndpoint())) {
+                builder.sseEndpoint(config.sseEndpoint().trim());
+            }
+            return initializeServer(config.id(), builder.build());
+        }
+        catch (Exception exception) {
+            logger.warn("Failed to initialize SSE MCP server {}", config.id(), exception);
+            return null;
+        }
+    }
+
+    private LoadedMcpServer loadStreamableHttpServer(McpServerConfig config) {
+        if (!hasText(config.url())) {
+            logger.warn("Skipping MCP server {} because url is blank", config.id());
+            return null;
+        }
+
+        try {
+            HttpClientStreamableHttpTransport.Builder builder = HttpClientStreamableHttpTransport.builder(config.url().trim())
+                    .jsonMapper(mcpJsonMapper)
+                    .connectTimeout(MCP_INITIALIZATION_TIMEOUT)
+                    .requestBuilder(httpRequestBuilder(config))
+                    .openConnectionOnStartup(false)
+                    .resumableStreams(true);
+            if (hasText(config.endpoint())) {
+                builder.endpoint(config.endpoint().trim());
+            }
+
+            HttpClientStreamableHttpTransport transport = builder.build();
+            transport.setExceptionHandler(throwable ->
+                    logger.debug("Observed streamable HTTP MCP transport error for {}", config.id(), throwable));
+            return initializeServer(config.id(), transport);
+        }
+        catch (Exception exception) {
+            logger.warn("Failed to initialize streamable HTTP MCP server {}", config.id(), exception);
+            return null;
+        }
+    }
+
+    private LoadedMcpServer initializeServer(String serverId, McpClientTransport transport) {
+        McpSyncClient client = McpClient.sync(transport)
+                .requestTimeout(MCP_REQUEST_TIMEOUT)
+                .initializationTimeout(MCP_INITIALIZATION_TIMEOUT)
+                .build();
+        client.initialize();
+
+        List<ToolCallback> tools = client.listTools().tools().stream()
+                .map(tool -> RuntimeMcpToolCallback.from(serverId, client, mcpJsonMapper, tool))
+                .map(ToolCallback.class::cast)
+                .toList();
+
+        logger.info("Loaded {} MCP tools from server {}", tools.size(), serverId);
+        return new LoadedMcpServer(serverId, transport, client, tools);
     }
 
     private void closeLoadedServers() {
@@ -145,13 +211,38 @@ public class RuntimeMcpToolProvider implements AutoCloseable {
             catch (Exception exception) {
                 logger.debug("Failed to close MCP transport for {}", loadedServer.id(), exception);
             }
-            try {
-                loadedServer.transport().awaitForExit();
-            }
-            catch (Exception exception) {
-                logger.debug("Failed to await MCP transport exit for {}", loadedServer.id(), exception);
+            if (loadedServer.transport() instanceof StdioClientTransport stdioClientTransport) {
+                try {
+                    stdioClientTransport.awaitForExit();
+                }
+                catch (Exception exception) {
+                    logger.debug("Failed to await MCP transport exit for {}", loadedServer.id(), exception);
+                }
             }
         }
+    }
+
+    private HttpRequest.Builder httpRequestBuilder(McpServerConfig config) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder();
+        for (Map.Entry<String, String> entry : safeHeaders(config).entrySet()) {
+            if (!hasText(entry.getKey()) || entry.getValue() == null) {
+                continue;
+            }
+            builder.header(entry.getKey().trim(), entry.getValue());
+        }
+        return builder;
+    }
+
+    private Map<String, String> safeHeaders(McpServerConfig config) {
+        return config.headers() == null ? Map.of() : config.headers();
+    }
+
+    private String normalizeTransport(String transport) {
+        return transport == null ? "" : transport.trim().toLowerCase();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String fingerprintOf(List<McpServerConfig> configs) {
@@ -165,7 +256,7 @@ public class RuntimeMcpToolProvider implements AutoCloseable {
 
     private record LoadedMcpServer(
             String id,
-            StdioClientTransport transport,
+            McpClientTransport transport,
             McpSyncClient client,
             List<ToolCallback> tools
     ) {

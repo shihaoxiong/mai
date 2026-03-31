@@ -12,6 +12,19 @@ public record McpServerConfig(
         String transport,
         String command,
         List<String> args,
-        Map<String, String> env
+        Map<String, String> env,
+        String url,
+        String endpoint,
+        String sseEndpoint,
+        Map<String, String> headers
 ) {
+
+    public McpServerConfig(String id,
+                           boolean enabled,
+                           String transport,
+                           String command,
+                           List<String> args,
+                           Map<String, String> env) {
+        this(id, enabled, transport, command, args, env, null, null, null, Map.of());
+    }
 }

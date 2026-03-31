@@ -12,6 +12,17 @@ public record PendingApproval(
         String message,
         String reason,
         ApprovalStatus status,
-        String comment
+        String comment,
+        RuntimeRunOptions runOptions
 ) {
+
+    public PendingApproval(String threadId,
+                           String runId,
+                           String approvalId,
+                           String message,
+                           String reason,
+                           ApprovalStatus status,
+                           String comment) {
+        this(threadId, runId, approvalId, message, reason, status, comment, null);
+    }
 }

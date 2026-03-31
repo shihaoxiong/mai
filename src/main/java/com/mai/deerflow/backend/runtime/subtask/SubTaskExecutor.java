@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -524,9 +525,16 @@ public class SubTaskExecutor {
 
     private void persistRecord(SubTaskRecord record) {
         Path taskFile = taskFile(record.parentThreadId(), record.taskId());
+        Path tempFile = taskFile.resolveSibling(taskFile.getFileName() + ".tmp");
         try {
             Files.createDirectories(taskFile.getParent());
-            objectMapper.writeValue(taskFile.toFile(), record);
+            objectMapper.writeValue(tempFile.toFile(), record);
+            try {
+                Files.move(tempFile, taskFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (IOException ignored) {
+                Files.move(tempFile, taskFile, StandardCopyOption.REPLACE_EXISTING);
+            }
         }
         catch (IOException exception) {
             throw new IllegalStateException("Failed to persist subtask " + record.taskId(), exception);

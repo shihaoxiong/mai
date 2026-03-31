@@ -16,7 +16,7 @@
 - SSE demo: `http://localhost:8080/api/p0/stream?threadId=demo-thread`
 - create thread: `POST /api/threads`
 - get thread: `GET /api/threads/{threadId}`
-- run thread: `POST /api/threads/{threadId}/runs`，请求体支持可选 `userId` 以启用长期记忆注入与抽取
+- run thread: `POST /api/threads/{threadId}/runs`，默认返回 `ThreadStateSnapshot`；当请求 `Accept: text/event-stream` 时会直接返回该次 run 的 SSE 事件流。请求体支持可选 `userId`，以及最小可用的 run 级参数：`model_name`、`is_plan_mode`、`subagent_enabled`、`max_concurrent_subagents`
 - delete thread: `DELETE /api/threads/{threadId}`
 - list models: `GET /api/models`
 - upload files: `POST /api/threads/{threadId}/uploads`
@@ -34,3 +34,5 @@
 - lead agent 会话 checkpoint 默认落在 `data/checkpoints/lead-agent/`
 - `GET /api/threads/{threadId}` 当前直接基于 lead agent state 投影线程展示态
 - 审批恢复所需的 pending approval 与线程 `userId` 绑定当前也保存在 lead agent checkpoint 中
+- runtime MCP tools 当前支持 `stdio`、HTTP SSE 与 streamable HTTP 三类 transport，并继续复用 deferred tools / `tool_search` 主链路
+- 长期记忆当前已升级为 `facts + structured profile` 共存的文件存储，并通过 debounce 队列异步更新

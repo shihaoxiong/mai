@@ -20,6 +20,9 @@ public class LeadAgentFactory {
                 .model(definition.model())
                 .releaseThread(definition.releaseThread());
 
+        if (definition.chatOptions() != null) {
+            builder.chatOptions(definition.chatOptions());
+        }
         if (!definition.systemPrompt().isBlank()) {
             builder.systemPrompt(definition.systemPrompt());
         }
@@ -31,6 +34,9 @@ public class LeadAgentFactory {
         }
         if (!definition.interceptors().isEmpty()) {
             builder.interceptors(definition.interceptors());
+        }
+        if (definition.toolExecutionExceptionProcessor() != null) {
+            builder.toolExecutionExceptionProcessor(definition.toolExecutionExceptionProcessor());
         }
         if (definition.saver() != null) {
             builder.saver(definition.saver());

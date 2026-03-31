@@ -1,7 +1,13 @@
 package com.mai.deerflow.backend.runtime.api;
 
+import com.mai.deerflow.backend.runtime.contract.RunEventEnvelope;
+import com.mai.deerflow.backend.runtime.contract.RunEventType;
+import com.mai.deerflow.backend.runtime.contract.ThreadMessage;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
+import com.mai.deerflow.backend.runtime.event.ThreadEventService;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,8 +16,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RestController
 @RequestMapping("/api/threads")
@@ -23,9 +34,12 @@ import reactor.core.scheduler.Schedulers;
 public class ThreadRuntimeController {
 
     private final ThreadRuntimeService threadRuntimeService;
+    private final ThreadEventService threadEventService;
 
-    public ThreadRuntimeController(ThreadRuntimeService threadRuntimeService) {
+    public ThreadRuntimeController(ThreadRuntimeService threadRuntimeService,
+                                   ThreadEventService threadEventService) {
         this.threadRuntimeService = threadRuntimeService;
+        this.threadEventService = threadEventService;
     }
 
     /**
@@ -51,16 +65,43 @@ public class ThreadRuntimeController {
     /**
      * 发起一次新的线程运行。
      */
-    @PostMapping("/{threadId}/runs")
+    @PostMapping(value = "/{threadId}/runs", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ThreadStateSnapshot> runThread(@PathVariable String threadId, @RequestBody ThreadRunRequest request) {
-        return Mono.fromCallable(() -> threadRuntimeService.runThread(
+                return Mono.fromCallable(() -> threadRuntimeService.runThread(
                         threadId,
                         request.message(),
                         request.approvalRequired() != null && request.approvalRequired(),
                         request.approvalReason(),
-                        request.userId()
+                        request.userId(),
+                        request.requestedRunOptions()
                 ))
                 .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 发起一次新的线程运行，并直接以 SSE 方式返回本次 run 的事件流。
+     */
+    @PostMapping(value = "/{threadId}/runs", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<RunEventEnvelope<Object>>> runThreadStream(@PathVariable String threadId,
+                                                                           @RequestBody ThreadRunRequest request) {
+        String runId = UUID.randomUUID().toString();
+        AtomicBoolean sawRunEvent = new AtomicBoolean(false);
+
+        return threadEventService.streamRun(threadId, runId)
+                .concatMap(this::expandRunSseEvent)
+                .doOnNext(event -> sawRunEvent.set(true))
+                                .doOnSubscribe(subscription -> Mono.fromCallable(() -> threadRuntimeService.runThread(
+                                        threadId,
+                                        request.message(),
+                                        request.approvalRequired() != null && request.approvalRequired(),
+                                        request.approvalReason(),
+                                        request.userId(),
+                                        request.requestedRunOptions(),
+                                        runId
+                                ))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .doOnError(error -> emitRunFailureIfNeeded(threadId, runId, error, sawRunEvent))
+                                .subscribe());
     }
 
     /**
@@ -93,5 +134,62 @@ public class ThreadRuntimeController {
         return Mono.fromRunnable(() -> threadRuntimeService.deleteThread(threadId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then();
+    }
+
+    private Flux<ServerSentEvent<RunEventEnvelope<Object>>> expandRunSseEvent(ServerSentEvent<RunEventEnvelope<Object>> event) {
+        if (event.data() == null || event.data().eventType() != RunEventType.RUN_COMPLETED) {
+            return Flux.just(event);
+        }
+        if (!(event.data().payload() instanceof ThreadStateSnapshot snapshot)) {
+            return Flux.just(event);
+        }
+
+        String assistantOutput = latestAssistantMessage(snapshot);
+        if (assistantOutput == null || assistantOutput.isBlank()) {
+            return Flux.just(event);
+        }
+
+        RunEventEnvelope<Object> tokenEnvelope = new RunEventEnvelope<>(
+                event.data().threadId(),
+                event.data().runId(),
+                RunEventType.TOKEN_DELTA,
+                assistantOutput
+        );
+        ServerSentEvent<RunEventEnvelope<Object>> tokenEvent = ServerSentEvent.<RunEventEnvelope<Object>>builder()
+                .id(tokenEnvelope.runId() + ":" + tokenEnvelope.eventType().wireName())
+                .event(tokenEnvelope.eventType().wireName())
+                .data(tokenEnvelope)
+                .build();
+        return Flux.just(tokenEvent, event);
+    }
+
+    private String latestAssistantMessage(ThreadStateSnapshot snapshot) {
+        if (snapshot == null || snapshot.messages() == null) {
+            return null;
+        }
+
+        for (int index = snapshot.messages().size() - 1; index >= 0; index--) {
+            ThreadMessage message = snapshot.messages().get(index);
+            if (message != null && "assistant".equals(message.role()) && message.content() != null && !message.content().isBlank()) {
+                return message.content();
+            }
+        }
+        return null;
+    }
+
+    private void emitRunFailureIfNeeded(String threadId,
+                                        String runId,
+                                        Throwable error,
+                                        AtomicBoolean sawRunEvent) {
+        if (sawRunEvent.get()) {
+            return;
+        }
+
+        threadEventService.emit(
+                threadId,
+                runId,
+                RunEventType.RUN_FAILED,
+                Map.of("message", error == null ? "Unknown error" : String.valueOf(error.getMessage()))
+        );
     }
 }

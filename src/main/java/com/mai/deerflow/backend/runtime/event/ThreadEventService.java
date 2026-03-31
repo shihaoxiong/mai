@@ -39,7 +39,26 @@ public class ThreadEventService {
                         .build());
     }
 
+    /**
+     * 订阅某一次指定 run 的事件流，并在 run 进入终态或等待态时自动结束。
+     */
+    public Flux<ServerSentEvent<RunEventEnvelope<Object>>> streamRun(String threadId, String runId) {
+        return stream(threadId)
+                .filter(event -> event.data() != null && runId.equals(event.data().runId()))
+                .takeUntil(this::isRunTerminalEvent);
+    }
+
     private Sinks.Many<RunEventEnvelope<Object>> sink(String threadId) {
         return sinks.computeIfAbsent(threadId, ignored -> Sinks.many().replay().limit(32));
+    }
+
+    private boolean isRunTerminalEvent(ServerSentEvent<RunEventEnvelope<Object>> event) {
+        if (event.data() == null) {
+            return false;
+        }
+        RunEventType eventType = event.data().eventType();
+        return eventType == RunEventType.RUN_COMPLETED
+                || eventType == RunEventType.RUN_FAILED
+                || eventType == RunEventType.APPROVAL_REQUIRED;
     }
 }

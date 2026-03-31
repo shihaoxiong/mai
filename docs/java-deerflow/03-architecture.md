@@ -216,18 +216,21 @@ flowchart TD
 - Runtime lead agent 已接入 `SummarizationHook`
 - Runtime lead agent 已接入 `TodoListInterceptor`
 - Runtime lead agent 已接入 `ask_clarification` 工具与对应拦截器，可直接把 run 转入 `WAITING_CLARIFICATION`
+- Runtime lead agent 已接入 tool error handling 与 dangling tool-call patch；普通工具异常会被格式化为工具结果继续回流，不完整 tool-call 历史会在下一轮模型调用前补齐占位响应
 - Runtime lead agent 已接入 tool-call 安全拦截器，当前会限制单轮 `task` fan-out，并在重复 tool-call 循环达到阈值时强制停下
 - Runtime lead agent 已接入 `RuntimeThreadContextInterceptor`，会在每轮模型调用前临时注入 `thread_data / uploaded_files` 上下文，但不污染持久化消息历史
 - Runtime lead agent 已接入 todo reminder 拦截器；当 todo 状态仍存在但 `write_todos` 已离开当前上下文窗口时，会补一条提醒消息
 - Runtime lead agent 已接入 `view_image` 工具与图像上下文注入拦截器，可在下一轮模型调用前重新注入图片内容
-- Runtime lead agent 已接入最小可用的 deferred tools / `tool_search`；当前已支持线程内文件工具与真实 stdio MCP tools 的延迟发现与执行
-- 已提供 `RuntimeMcpToolProvider`，会基于平台层 `McpServerConfig` 建立 stdio MCP 连接、缓存工具并在配置变更时失效重载
-- 已提供 `RuntimeLeadAgentPromptService`，按线程聚合 skills、uploads、workspace 与运行规则，并在 lead agent 创建时注入 system prompt
+- Runtime lead agent 已接入最小可用的 deferred tools / `tool_search`；当前已支持线程内文件工具与真实 stdio / HTTP SSE / streamable HTTP MCP tools 的延迟发现与执行
+- 已提供 `RuntimeMcpToolProvider`，会基于平台层 `McpServerConfig` 建立 stdio / HTTP MCP 连接、缓存工具并在配置变更时失效重载
+- 已提供 `RuntimeLeadAgentPromptService`，按线程聚合 skills、uploads、workspace、agent soul、结构化长期记忆与研究型输出规则，并在 lead agent 创建时注入 system prompt
 - `write_todos` 工具结果当前会同步投影到 lead agent checkpoint 的 `todos` 状态，供线程查询与恢复直接复用
 - Runtime lead agent 已接入 `task` 工具，可把委派请求转交给 `SubTaskExecutor`
 - `SubTaskExecutor` 已接入 `SequentialAgent` 和 `ParallelAgent`，当前可在子任务层跑通一个串行和一个并行编排场景
 - 已提供 `PostRunGenerationService`，会在 run 完成后生成标题和建议问题，替换原先的静态占位值
 - 审批恢复链路当前支持 `APPROVE`、`REJECT`、`REQUEST_CLARIFICATION` 三种结果；`REQUEST_CLARIFICATION` 会让线程进入 `WAITING_CLARIFICATION`
+- `POST /api/threads/{threadId}/runs` 当前已支持按 `Accept` 头协商返回同步 JSON 或 run 级 SSE 事件流；run 级 SSE 继续复用统一的 `RunEventType`
+- `POST /api/threads/{threadId}/runs` 当前已支持最小可用的 run 级参数覆盖：`model_name / is_plan_mode / subagent_enabled / max_concurrent_subagents`；参数会随待审批上下文一起持久化并在 resume 时复用
 
 ## 7. 状态模型设计
 
@@ -263,6 +266,7 @@ flowchart TD
 - `GET /api/threads/{threadId}`
 - `DELETE /api/threads/{threadId}`
 - `POST /api/threads/{threadId}/runs`
+  说明：默认返回同步快照；当 `Accept: text/event-stream` 时直接返回该次 run 的 SSE 事件流
 - `GET /api/threads/{threadId}/state`
 - `POST /api/threads/{threadId}/resume`
 - `POST /api/threads/{threadId}/approvals/{approvalId}`
@@ -318,10 +322,11 @@ flowchart TD
 
 - 默认使用 `data/memory/` 作为长期记忆根目录。
 - 每个用户的长期记忆单独存成一个 JSON 文件，避免与 thread 工作区生命周期耦合。
-- 读取时先支持按 `limit` 和 `minConfidence` 做基础筛选，为后续注入策略复用。
-- 已实现 `MemoryExtractorJob`，在 run 成功结束后异步调度启发式抽取。
+- `FileMemoryStore` 当前同时保存 facts 列表和 `StructuredMemoryProfile`，让结构化画像与可筛选事实共存于同一份用户记忆文件中。
+- 读取时支持按 `limit` 和 `minConfidence` 做 facts 筛选，注入时则会优先读取结构化 profile 再补充高置信 facts。
+- 已实现 `MemoryUpdateQueue` 与升级后的 `MemoryExtractorJob`；run 成功结束后会先进入 debounce 队列，再异步更新 facts 与结构化 profile。
 - 当前通过 `POST /api/threads/{threadId}/runs` 请求体中的可选 `userId` 绑定线程与用户；缺少 `userId` 时会跳过长期记忆抽取。
-- 已实现 `MemoryInjectionService`，在 `AssembleContextNode` 中按 `maxFacts/minConfidence` 检索长期记忆，并以 `append-to-user-input` 策略注入 agent 输入。
+- 已实现 `MemoryInjectionService`，当前会把结构化 profile 与高置信 facts 一并按 `append-to-user-input` 策略注入 lead agent 输入，不再依赖旧的 outer graph context node。
 
 ### 9.3 文件与产物
 

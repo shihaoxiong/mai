@@ -64,7 +64,7 @@ public class SkillRegistryService {
     private SkillDescriptor updateEnabled(String skillId, boolean enabled) {
         List<SkillDescriptor> updatedSkills = listSkills().stream()
                 .map(skill -> skill.id().equals(skillId)
-                        ? new SkillDescriptor(skill.id(), skill.name(), skill.description(), enabled)
+                        ? new SkillDescriptor(skill.id(), skill.name(), skill.description(), enabled, skill.location())
                         : skill)
                 .toList();
 

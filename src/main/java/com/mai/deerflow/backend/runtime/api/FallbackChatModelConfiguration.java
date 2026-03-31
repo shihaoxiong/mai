@@ -22,21 +22,24 @@ public class FallbackChatModelConfiguration {
      * 构造最小回退模型，保证本地开发和测试链路可运行。
      */
     ChatModel fallbackChatModel() {
-        return new ChatModel() {
-            @Override
-            public ChatResponse call(Prompt prompt) {
-                List<Message> messages = prompt.getInstructions();
-                String lastUserMessage = messages.stream()
-                        .filter(UserMessage.class::isInstance)
-                        .map(UserMessage.class::cast)
-                        .reduce((previous, current) -> current)
-                        .map(UserMessage::getText)
-                        .orElse("");
+        return new FallbackChatModel();
+    }
 
-                return new ChatResponse(List.of(new Generation(
-                        new AssistantMessage("Processed: " + lastUserMessage)
-                )));
-            }
-        };
+    static final class FallbackChatModel implements ChatModel {
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            List<Message> messages = prompt.getInstructions();
+            String lastUserMessage = messages.stream()
+                    .filter(UserMessage.class::isInstance)
+                    .map(UserMessage.class::cast)
+                    .reduce((previous, current) -> current)
+                    .map(UserMessage::getText)
+                    .orElse("");
+
+            return new ChatResponse(List.of(new Generation(
+                    new AssistantMessage("Processed: " + lastUserMessage)
+            )));
+        }
     }
 }

@@ -9,6 +9,8 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ThreadRuntimeControllerTests {
 
@@ -199,5 +201,71 @@ class ThreadRuntimeControllerTests {
                 .jsonPath("$.runStatus").isEqualTo("COMPLETED")
                 .jsonPath("$.approval.status").isEqualTo("NEEDS_CLARIFICATION")
                 .jsonPath("$.approval.reason").isEqualTo("Use the staging environment for the rollout");
+    }
+
+    @Test
+    void shouldSupportSseThreadRunOnSameRunsEndpoint() {
+        String threadId = "sse-run-thread-" + UUID.randomUUID();
+        webTestClient.post()
+                .uri("/api/threads")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "threadId": "%s"
+                        }
+                        """.formatted(threadId))
+                .exchange()
+                .expectStatus().isCreated();
+
+        String responseBody = webTestClient.post()
+                .uri("/api/threads/" + threadId + "/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .bodyValue("""
+                        {
+                          "message": "stream this run via sse"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader()
+                .contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(responseBody)
+                .contains("event:run.started")
+                .contains("event:token.delta")
+                .contains("event:run.completed")
+                .contains("\"threadId\":\"" + threadId + "\"")
+                .contains("Processed: stream this run via sse");
+    }
+
+    @Test
+    void shouldRejectUnsupportedRunOptionsWithBadRequest() {
+        String threadId = "bad-run-options-thread-" + UUID.randomUUID();
+        webTestClient.post()
+                .uri("/api/threads")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "threadId": "%s"
+                        }
+                        """.formatted(threadId))
+                .exchange()
+                .expectStatus().isCreated();
+
+        webTestClient.post()
+                .uri("/api/threads/" + threadId + "/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "message": "run with unsupported reasoning",
+                          "reasoning_effort": "high"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isBadRequest();
     }
 }

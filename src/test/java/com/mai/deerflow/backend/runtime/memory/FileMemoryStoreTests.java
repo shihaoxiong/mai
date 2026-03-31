@@ -136,4 +136,46 @@ class FileMemoryStoreTests {
             assertThat(files).isEmpty();
         }
     }
+
+    @Test
+    void shouldPersistStructuredMemoryProfileAlongsideFacts() {
+        FileMemoryStore memoryStore = new FileMemoryStore(properties, objectMapper);
+
+        StructuredMemoryProfile savedProfile = memoryStore.saveProfile(
+                "profile-user",
+                new StructuredMemoryProfile(
+                        "1.0",
+                        "2026-03-30T00:00:00Z",
+                        new MemoryUserProfile(
+                                new MemoryProfileSection("Java backend developer", "2026-03-30T00:00:00Z"),
+                                MemoryProfileSection.empty(),
+                                new MemoryProfileSection("Investigating memory queue design", "2026-03-30T00:00:00Z")
+                        ),
+                        new MemoryHistoryProfile(
+                                new MemoryProfileSection("Recently focused on long-running runtime tasks", "2026-03-30T00:00:00Z"),
+                                MemoryProfileSection.empty(),
+                                new MemoryProfileSection("Prefers incremental delivery", "2026-03-30T00:00:00Z")
+                        )
+                )
+        );
+        memoryStore.save("profile-user", new MemoryFact(
+                null,
+                "preference",
+                "Keep comments in Chinese",
+                0.90d,
+                "thread-profile",
+                null,
+                null,
+                Map.of()
+        ));
+
+        FileMemoryStore reloadedStore = new FileMemoryStore(properties, objectMapper);
+
+        assertThat(savedProfile.user().workContext().summary()).isEqualTo("Java backend developer");
+        assertThat(reloadedStore.loadProfile("profile-user").history().longTermBackground().summary())
+                .isEqualTo("Prefers incremental delivery");
+        assertThat(reloadedStore.list("profile-user"))
+                .extracting(MemoryFact::content)
+                .containsExactly("Keep comments in Chinese");
+    }
 }

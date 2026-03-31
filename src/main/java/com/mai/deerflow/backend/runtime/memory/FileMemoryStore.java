@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -22,7 +23,7 @@ import java.util.UUID;
  *
  * 每个用户的记忆单独存一份文件，既方便后续替换为数据库实现，也能避免 thread 级目录清理误删长期记忆。
  */
-public class FileMemoryStore implements MemoryStore {
+public class FileMemoryStore implements MemoryStore, MemoryProfileStore {
 
     private static final Comparator<MemoryFact> DEFAULT_ORDER = Comparator
             .comparingDouble(MemoryFact::confidence)
@@ -95,33 +96,35 @@ public class FileMemoryStore implements MemoryStore {
         return true;
     }
 
-    private List<MemoryFact> readFacts(String userId) {
-        Path factsFile = factsFile(userId);
-        if (!Files.isRegularFile(factsFile)) {
-            return List.of();
-        }
+    @Override
+    public synchronized StructuredMemoryProfile loadProfile(String userId) {
+        return readStoredMemories(normalizeUserId(userId)).profile();
+    }
 
-        try {
-            StoredUserMemories storedUserMemories = objectMapper.readValue(factsFile.toFile(), StoredUserMemories.class);
-            return storedUserMemories.facts();
-        }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to read memories for user " + userId, exception);
-        }
+    @Override
+    public synchronized StructuredMemoryProfile saveProfile(String userId, StructuredMemoryProfile profile) {
+        String normalizedUserId = normalizeUserId(userId);
+        StoredUserMemories existingMemories = readStoredMemories(normalizedUserId);
+        StructuredMemoryProfile normalizedProfile = profile == null ? StructuredMemoryProfile.empty() : profile;
+        writeStoredMemories(normalizedUserId, new StoredUserMemories(
+                normalizedUserId,
+                normalizedProfile,
+                existingMemories.facts()
+        ));
+        return normalizedProfile;
+    }
+
+    private List<MemoryFact> readFacts(String userId) {
+        return readStoredMemories(userId).facts();
     }
 
     private void writeFacts(String userId, List<MemoryFact> facts) {
-        Path factsFile = factsFile(userId);
-        try {
-            if (factsFile.getParent() != null) {
-                Files.createDirectories(factsFile.getParent());
-            }
-            objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(factsFile.toFile(), new StoredUserMemories(userId, facts));
-        }
-        catch (IOException exception) {
-            throw new IllegalStateException("Failed to write memories for user " + userId, exception);
-        }
+        StoredUserMemories existingMemories = readStoredMemories(userId);
+        writeStoredMemories(userId, new StoredUserMemories(
+                userId,
+                existingMemories.profile(),
+                facts
+        ));
     }
 
     private void deleteFactsFile(String userId) {
@@ -130,6 +133,43 @@ public class FileMemoryStore implements MemoryStore {
         }
         catch (IOException exception) {
             throw new IllegalStateException("Failed to delete memories for user " + userId, exception);
+        }
+    }
+
+    private StoredUserMemories readStoredMemories(String userId) {
+        Path factsFile = factsFile(userId);
+        if (!Files.isRegularFile(factsFile)) {
+            return new StoredUserMemories(userId, StructuredMemoryProfile.empty(), List.of());
+        }
+
+        try {
+            StoredUserMemories storedUserMemories = objectMapper.readValue(factsFile.toFile(), StoredUserMemories.class);
+            return storedUserMemories == null
+                    ? new StoredUserMemories(userId, StructuredMemoryProfile.empty(), List.of())
+                    : storedUserMemories;
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to read memories for user " + userId, exception);
+        }
+    }
+
+    private void writeStoredMemories(String userId, StoredUserMemories storedUserMemories) {
+        Path factsFile = factsFile(userId);
+        Path tempFile = factsFile.resolveSibling(factsFile.getFileName() + ".tmp");
+        try {
+            if (factsFile.getParent() != null) {
+                Files.createDirectories(factsFile.getParent());
+            }
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(tempFile.toFile(), storedUserMemories);
+            try {
+                Files.move(tempFile, factsFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (IOException ignored) {
+                Files.move(tempFile, factsFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        catch (IOException exception) {
+            throw new IllegalStateException("Failed to write memories for user " + userId, exception);
         }
     }
 
@@ -201,10 +241,12 @@ public class FileMemoryStore implements MemoryStore {
      */
     record StoredUserMemories(
             String userId,
+            StructuredMemoryProfile profile,
             List<MemoryFact> facts
     ) {
 
         StoredUserMemories {
+            profile = profile == null ? StructuredMemoryProfile.empty() : profile;
             facts = facts == null ? List.of() : List.copyOf(facts);
         }
     }

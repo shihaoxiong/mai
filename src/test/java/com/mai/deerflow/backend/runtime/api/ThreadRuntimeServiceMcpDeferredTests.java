@@ -18,6 +18,7 @@ import com.mai.deerflow.backend.runtime.mcp.McpConfigService;
 import com.mai.deerflow.backend.runtime.mcp.McpServerConfig;
 import com.mai.deerflow.backend.runtime.mcp.RuntimeMcpToolCallback;
 import com.mai.deerflow.backend.runtime.mcp.RuntimeMcpToolProvider;
+import com.mai.deerflow.backend.runtime.mcp.TestHttpMcpServer;
 import com.mai.deerflow.backend.runtime.memory.FileMemoryStore;
 import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
 import com.mai.deerflow.backend.runtime.memory.MemoryInjectionProperties;
@@ -56,7 +57,19 @@ class ThreadRuntimeServiceMcpDeferredTests {
     @Test
     void shouldDiscoverAndExecuteRealMcpToolThroughToolSearch() {
         String exposedToolName = RuntimeMcpToolCallback.exposedName("demo", "mcp_reverse");
-        Fixture fixture = fixture(new McpDeferredChatModel(exposedToolName));
+        Fixture fixture = fixture(new McpDeferredChatModel(exposedToolName), List.of(new McpServerConfig(
+                "demo",
+                true,
+                "stdio",
+                javaExecutable(),
+                List.of(
+                        "-Dlogback.configurationFile=" + logbackConfig(),
+                        "-cp",
+                        classpath(),
+                        P0McpDemoServerMain.class.getName()
+                ),
+                Map.of()
+        )));
         String threadId = "mcp-deferred-thread-" + UUID.randomUUID();
 
         try {
@@ -75,7 +88,42 @@ class ThreadRuntimeServiceMcpDeferredTests {
         }
     }
 
-    private Fixture fixture(ChatModel chatModel) {
+    @Test
+    void shouldDiscoverAndExecuteRealHttpSseMcpToolThroughToolSearch() {
+        try (TestHttpMcpServer server = TestHttpMcpServer.start()) {
+            String exposedToolName = RuntimeMcpToolCallback.exposedName("demo-sse", "mcp_reverse");
+            Fixture fixture = fixture(new McpDeferredChatModel(exposedToolName), List.of(new McpServerConfig(
+                    "demo-sse",
+                    true,
+                    "sse",
+                    null,
+                    List.of(),
+                    Map.of(),
+                    server.baseUrl(),
+                    null,
+                    "/sse",
+                    Map.of()
+            )));
+            String threadId = "mcp-http-deferred-thread-" + UUID.randomUUID();
+
+            try {
+                fixture.threadRuntimeService().createThread(threadId);
+                ThreadStateSnapshot snapshot = fixture.threadRuntimeService().runThread(threadId, "use the HTTP SSE mcp tool via tool_search");
+
+                assertThat(snapshot.runStatus()).isEqualTo(RunStatus.COMPLETED);
+                assertThat(snapshot.messages()).isNotEmpty();
+                assertThat(snapshot.messages().get(snapshot.messages().size() - 1).content())
+                        .contains("mcpSchema=true")
+                        .contains("MCP:ateb");
+            }
+            finally {
+                fixture.threadRuntimeService().deleteThread(threadId);
+                fixture.runtimeMcpToolProvider().close();
+            }
+        }
+    }
+
+    private Fixture fixture(ChatModel chatModel, List<McpServerConfig> mcpServerConfigs) {
         ThreadWorkspaceProperties workspaceProperties = new ThreadWorkspaceProperties();
         workspaceProperties.setBaseDir(tempDir.resolve("threads"));
         ThreadWorkspaceService threadWorkspaceService = new ThreadWorkspaceService(workspaceProperties);
@@ -88,19 +136,7 @@ class ThreadRuntimeServiceMcpDeferredTests {
         FileRuntimeConfigRepository repository = new FileRuntimeConfigRepository(runtimeConfigProperties, new ObjectMapper());
         SkillRegistryService skillRegistryService = new SkillRegistryService(repository);
         McpConfigService mcpConfigService = new McpConfigService(repository);
-        mcpConfigService.replaceServers(List.of(new McpServerConfig(
-                "demo",
-                true,
-                "stdio",
-                javaExecutable(),
-                List.of(
-                        "-Dlogback.configurationFile=" + logbackConfig(),
-                        "-cp",
-                        classpath(),
-                        P0McpDemoServerMain.class.getName()
-                ),
-                Map.of()
-        )));
+        mcpConfigService.replaceServers(mcpServerConfigs);
 
         MemoryStoreProperties memoryStoreProperties = new MemoryStoreProperties();
         memoryStoreProperties.setBaseDir(tempDir.resolve("memory"));

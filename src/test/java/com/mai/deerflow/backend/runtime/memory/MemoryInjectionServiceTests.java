@@ -58,6 +58,23 @@ class MemoryInjectionServiceTests {
                 null,
                 Map.of()
         ));
+        memoryStore.saveProfile(
+                "injection-user",
+                new StructuredMemoryProfile(
+                        "1.0",
+                        "2026-03-30T00:00:00Z",
+                        new MemoryUserProfile(
+                                new MemoryProfileSection("Maintains the Java DeerFlow backend", "2026-03-30T00:00:00Z"),
+                                MemoryProfileSection.empty(),
+                                new MemoryProfileSection("Currently focused on runtime reliability", "2026-03-30T00:00:00Z")
+                        ),
+                        new MemoryHistoryProfile(
+                                new MemoryProfileSection("Recently worked on SSE and MCP transport", "2026-03-30T00:00:00Z"),
+                                MemoryProfileSection.empty(),
+                                new MemoryProfileSection("Prefers incremental rollout with tests", "2026-03-30T00:00:00Z")
+                        )
+                )
+        );
 
         MemoryInjectionService memoryInjectionService = new MemoryInjectionService(memoryStore, properties);
 
@@ -68,6 +85,9 @@ class MemoryInjectionServiceTests {
 
         assertThat(injectionResult.memoryFacts()).hasSize(2);
         assertThat(injectionResult.effectiveUserInput())
+                .contains("用户画像")
+                .contains("历史摘要")
+                .contains("Maintains the Java DeerFlow backend")
                 .contains("Keep comments in Chinese")
                 .contains("Uses Java 17 locally")
                 .contains("Please help me continue the backend task.")
