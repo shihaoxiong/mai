@@ -1,13 +1,13 @@
-package com.mai.deerflow.backend.p0;
+package com.mai.deerflow.backend.runtime.mcp;
 
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 
-public final class P0McpDemoServerMain {
+public final class McpDemoServerMain {
 
-    private P0McpDemoServerMain() {
+    private McpDemoServerMain() {
     }
 
     public static void main(String[] args) {
@@ -30,7 +30,7 @@ public final class P0McpDemoServerMain {
                 .build();
 
         McpServer.sync(new StdioServerTransportProvider(jsonMapper))
-                .serverInfo("p0-mcp-demo-server", "0.0.1")
+                .serverInfo("mcp-demo-server", "0.0.1")
                 .tool(reverseTool, (exchange, arguments) -> {
                     String text = String.valueOf(arguments.getOrDefault("text", ""));
                     String reversed = new StringBuilder(text).reverse().toString();

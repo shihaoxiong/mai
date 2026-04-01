@@ -230,6 +230,10 @@ flowchart TD
 - 已提供 `PostRunGenerationService`，会在 run 完成后生成标题和建议问题，替换原先的静态占位值
 - 审批恢复链路当前支持 `APPROVE`、`REJECT`、`REQUEST_CLARIFICATION` 三种结果；`REQUEST_CLARIFICATION` 会让线程进入 `WAITING_CLARIFICATION`
 - `POST /api/threads/{threadId}/runs` 当前已支持按 `Accept` 头协商返回同步 JSON 或 run 级 SSE 事件流；run 级 SSE 继续复用统一的 `RunEventType`
+- run 级 SSE 当前已直接消费 `leadAgent.streamMessages(...)` 的真实流式输出，不再在 `run.completed` 后人为补发伪造 `token.delta`
+- run 级 SSE 当前会把 assistant 文本增量映射为 `token.delta`，把工具发起和工具结果映射为 `tool.call.started / tool.call.completed`
+- 当前 run 级流式依赖底层 `ChatModel.stream(...)`；如果 provider 未实现流式接口，run 会快速失败而不是静默降级到伪流式
+- 当前多 `Generation` 归一化仍未接入 runtime chat model；若 provider 在单轮或单个流式 chunk 中返回多个候选 generation，底层 agent 仍可能只消费其中一条
 - `POST /api/threads/{threadId}/runs` 当前已支持最小可用的 run 级参数覆盖：`model_name / is_plan_mode / subagent_enabled / max_concurrent_subagents`；参数会随待审批上下文一起持久化并在 resume 时复用
 
 ## 7. 状态模型设计
@@ -266,7 +270,7 @@ flowchart TD
 - `GET /api/threads/{threadId}`
 - `DELETE /api/threads/{threadId}`
 - `POST /api/threads/{threadId}/runs`
-  说明：默认返回同步快照；当 `Accept: text/event-stream` 时直接返回该次 run 的 SSE 事件流
+  说明：默认返回同步快照；当 `Accept: text/event-stream` 时直接返回该次 run 的 SSE 事件流。当前流式返回已直接连接 lead agent 的流式输出链路
 - `GET /api/threads/{threadId}/state`
 - `POST /api/threads/{threadId}/resume`
 - `POST /api/threads/{threadId}/approvals/{approvalId}`
@@ -393,13 +397,24 @@ ${app.data-dir}/threads/{threadId}/
 
 - 已支持基于 replay sink 的线程事件流
 - 已在审批等待、运行开始、运行完成、运行失败时发出事件
+- 已在 run 级流式执行过程中发出真实 `token.delta`
+- 已在 lead agent 发起工具调用时发出 `tool.call.started`
+- 已在工具结果回流到消息流时发出 `tool.call.completed`
 
 事件载荷要求：
 
 - 必须带 `threadId`
 - 必须带 `runId`
-- 必须带 `timestamp`
-- 关键事件必须带 `step` 或 `node`
+- 当前 `RunEventEnvelope` 只冻结 `threadId / runId / eventType / payload` 四个字段，尚未引入统一 `timestamp`
+- `step / node` 当前也尚未进入统一对外契约；如需前端精细渲染，应通过 `payload` 中的工具或子任务信息补充
+
+当前 payload 语义：
+
+- `token.delta`：当前为单段文本字符串，来源于流式 assistant message 的 `text`
+- `tool.call.started`：当前为 tool call 列表，包含 `id / type / name / arguments`
+- `tool.call.completed`：当前为 tool response 列表
+- `run.completed`：当前为完整 `ThreadStateSnapshot`
+- `run.failed`：当前为最小错误对象，至少包含 `message`
 
 ## 11. 子任务执行设计
 

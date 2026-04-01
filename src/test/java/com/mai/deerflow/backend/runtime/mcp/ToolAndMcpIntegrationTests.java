@@ -1,4 +1,4 @@
-package com.mai.deerflow.backend.p0;
+package com.mai.deerflow.backend.runtime.mcp;
 
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.MemorySaver;
@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class P0ToolAndMcpIntegrationTests {
+class ToolAndMcpIntegrationTests {
 
     @Test
     void leadAgentShouldCallLocalToolAndMcpTool() throws Exception {
@@ -45,7 +45,7 @@ class P0ToolAndMcpIntegrationTests {
             ToolCallback mcpTool = new McpSyncToolCallback(mcpDemoClient.client(), mcpDemoClient.jsonMapper(), "mcp_reverse");
 
             ReactAgent reactAgent = ReactAgent.builder()
-                    .name("p0-tool-agent")
+                    .name("tool-and-mcp-agent")
                     .instruction("Use tools when they are available.")
                     .model(new DualToolCallingChatModel())
                     .tools(localTool, mcpTool)
@@ -131,14 +131,14 @@ class P0ToolAndMcpIntegrationTests {
         private static ServerParameters serverParameters() {
             String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
             String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-            String logbackConfig = Path.of("target", "test-classes", "p0-mcp-logback.xml").toAbsolutePath().toString();
+            String logbackConfig = Path.of("target", "test-classes", "mcp-demo-logback.xml").toAbsolutePath().toString();
 
             return ServerParameters.builder(javaExecutable)
                     .args(
                             "-Dlogback.configurationFile=" + logbackConfig,
                             "-cp",
                             classpath,
-                            P0McpDemoServerMain.class.getName()
+                            McpDemoServerMain.class.getName()
                     )
                     .build();
         }

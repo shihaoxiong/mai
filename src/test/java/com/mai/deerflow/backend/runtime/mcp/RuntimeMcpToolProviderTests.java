@@ -1,7 +1,6 @@
 package com.mai.deerflow.backend.runtime.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mai.deerflow.backend.p0.P0McpDemoServerMain;
 import com.mai.deerflow.backend.runtime.config.FileRuntimeConfigRepository;
 import com.mai.deerflow.backend.runtime.config.RuntimeConfigProperties;
 import org.junit.jupiter.api.Test;
@@ -35,7 +34,7 @@ class RuntimeMcpToolProviderTests {
                         "-Dlogback.configurationFile=" + logbackConfig(),
                         "-cp",
                         classpath(),
-                        P0McpDemoServerMain.class.getName()
+                        McpDemoServerMain.class.getName()
                 ),
                 Map.of()
         )));
@@ -135,6 +134,6 @@ class RuntimeMcpToolProviderTests {
     }
 
     private String logbackConfig() {
-        return Path.of("target", "test-classes", "p0-mcp-logback.xml").toAbsolutePath().toString();
+        return Path.of("target", "test-classes", "mcp-demo-logback.xml").toAbsolutePath().toString();
     }
 }

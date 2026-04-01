@@ -1,7 +1,6 @@
 package com.mai.deerflow.backend.runtime.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mai.deerflow.backend.p0.P0McpDemoServerMain;
 import com.mai.deerflow.backend.runtime.agent.LeadAgentFactory;
 import com.mai.deerflow.backend.runtime.agent.RuntimeAgentEnhancementService;
 import com.mai.deerflow.backend.runtime.agent.RuntimeDeferredToolService;
@@ -14,6 +13,7 @@ import com.mai.deerflow.backend.runtime.config.RuntimeConfigProperties;
 import com.mai.deerflow.backend.runtime.contract.RunStatus;
 import com.mai.deerflow.backend.runtime.contract.ThreadStateSnapshot;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
+import com.mai.deerflow.backend.runtime.mcp.McpDemoServerMain;
 import com.mai.deerflow.backend.runtime.mcp.McpConfigService;
 import com.mai.deerflow.backend.runtime.mcp.McpServerConfig;
 import com.mai.deerflow.backend.runtime.mcp.RuntimeMcpToolCallback;
@@ -66,7 +66,7 @@ class ThreadRuntimeServiceMcpDeferredTests {
                         "-Dlogback.configurationFile=" + logbackConfig(),
                         "-cp",
                         classpath(),
-                        P0McpDemoServerMain.class.getName()
+                        McpDemoServerMain.class.getName()
                 ),
                 Map.of()
         )));
@@ -198,7 +198,7 @@ class ThreadRuntimeServiceMcpDeferredTests {
     }
 
     private String logbackConfig() {
-        return Path.of("target", "test-classes", "p0-mcp-logback.xml").toAbsolutePath().toString();
+        return Path.of("target", "test-classes", "mcp-demo-logback.xml").toAbsolutePath().toString();
     }
 
     private static final class McpDeferredChatModel implements ChatModel {

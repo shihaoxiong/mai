@@ -123,6 +123,31 @@
 - SSE `id` 推荐格式：`{runId}:{eventType}`
 - 所有事件都必须带 `threadId` 和 `runId`
 
+### 3.3 当前 payload 语义
+
+当前实现里，各事件 payload 约定如下：
+
+- `run.started`
+  payload：最小运行状态对象，当前至少包含 `status`
+- `token.delta`
+  payload：字符串；来源于流式 assistant message 的 `text`
+- `tool.call.started`
+  payload：tool call 列表；当前元素至少包含 `id`、`type`、`name`、`arguments`
+- `tool.call.completed`
+  payload：tool response 列表
+- `approval.required`
+  payload：`ApprovalState`
+- `run.completed`
+  payload：`ThreadStateSnapshot`
+- `run.failed`
+  payload：最小错误对象，当前至少包含 `message`
+
+### 3.4 当前边界
+
+- run 级 SSE 当前已经接入真实流式输出链路，不再在 `run.completed` 后补发伪造 `token.delta`
+- run 级流式依赖底层 `ChatModel.stream(...)`；如果 provider 未实现流式接口，当前会快速失败，而不是自动降级到假流式
+- 多 `Generation` 归一化目前尚未进入 runtime 对外契约；如果 provider 在单轮或单个流式 chunk 中返回多个候选 generation，底层 agent 仍可能只消费其中一条
+
 ## 4. P0 的冻结边界
 
 当前冻结的是“命名与结构”，不是最终完整语义。
@@ -138,7 +163,7 @@
 已通过以下验证：
 
 - `RuntimeContractTests`：验证状态模型与事件名
-- `P0SseDemoControllerTests`：验证 SSE demo 使用统一事件协议
+- `ThreadRuntimeControllerTests`：验证 run 级 SSE 使用统一事件协议
 
 ## 6. 关联文档
 

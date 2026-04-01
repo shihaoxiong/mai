@@ -34,6 +34,8 @@
 - 线程查询、恢复、审批、todos、messages 当前统一从 lead agent state / checkpoint 投影。
 - 当前唯一 checkpoint 真相源是 lead agent saver；线程本地文件态继续保留在 `workspace / uploads / outputs / metadata/subtasks`。
 - `POST /api/threads/{threadId}/runs` 当前已经支持 run 级 SSE 事件流，不必再额外依赖独立的 outer graph 流式包装层。
+- run 级 SSE 当前已经切到真实流式输出路径，直接消费 `leadAgent.streamMessages(...)`，不再在 `run.completed` 后补伪 `token.delta`。
+- 当前仍有一个明确边界：多 `Generation` 归一化尚未接入 `runtimeChatModel`，如果 provider 返回多候选 generation，底层 agent 仍可能只消费其中一条。
 - 接下来的工作重点是继续补齐 lead agent 策略层能力，而不是重建外层 RuntimeGraph。
 
 ## 4. 当前任务列表
@@ -226,6 +228,15 @@
   产出：更完整的 skill progressive loading、agent soul、research citation/output 规则与 memory system prompt 注入。
   完成标准：lead agent prompt/context 与 DeerFlow agents 的关键行为约束更一致，但不回退到 outer graph。
   说明：当前 prompt 已支持 `agent soul`、结构化长期记忆 `<memory>` 段、带 location 的技能清单与 progressive loading 说明，以及研究型回答的 citation/output 规则。
+
+- [x] P3-21 补齐 run 级真实流式输出链路
+  产出：直接基于 `leadAgent.streamMessages(...)` 的 run 级 SSE 执行路径，以及 `token.delta / tool.call.started / tool.call.completed / run.completed` 事件串联。
+  完成标准：`POST /api/threads/{threadId}/runs` 在 `Accept: text/event-stream` 下不再依赖 completion 后伪造 token 事件。
+  说明：当前 fallback chat model 已补齐最小 `stream(...)` 实现，测试环境可直接验证真流式链路。
+
+- [ ] P3-22 补齐多 Generation 归一化
+  产出：runtime chat model 层的多 generation 归一化策略，统一合并 `content / toolCalls / metadata`，避免底层 agent 框架只消费第一条 generation。
+  完成标准：当 provider 单轮返回多个 generation 时，同步和流式链路都不会因为 `ChatResponse.getResult()` 语义而丢失有效 tool calls 或文本。
 
 ### P4：生产化与稳定性
 

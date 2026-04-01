@@ -1,4 +1,4 @@
-package com.mai.deerflow.backend.p0;
+package com.mai.deerflow.backend.runtime.agent;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReactAgentCheckpointIntegrationTests {
 
     private final ReactAgent reactAgent = ReactAgent.builder()
-            .name("p0-react-agent")
+            .name("react-agent-checkpoint-test")
             .instruction("You are a checkpoint verification agent.")
             .model(new PromptCountingChatModel())
             .saver(new MemorySaver())
