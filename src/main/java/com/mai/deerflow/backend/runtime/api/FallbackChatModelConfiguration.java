@@ -7,6 +7,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 
@@ -29,6 +30,15 @@ public class FallbackChatModelConfiguration {
 
         @Override
         public ChatResponse call(Prompt prompt) {
+            return response(prompt);
+        }
+
+        @Override
+        public Flux<ChatResponse> stream(Prompt prompt) {
+            return Flux.just(response(prompt));
+        }
+
+        private ChatResponse response(Prompt prompt) {
             List<Message> messages = prompt.getInstructions();
             String lastUserMessage = messages.stream()
                     .filter(UserMessage.class::isInstance)

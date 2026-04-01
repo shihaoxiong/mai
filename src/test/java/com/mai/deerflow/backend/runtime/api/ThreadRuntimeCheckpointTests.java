@@ -57,6 +57,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ThreadRuntimeCheckpointTests {
 
+    private static final String LEAD_AGENT_INSTRUCTION =
+            "You are the Java DeerFlow backend lead agent. Execute directly unless delegation is genuinely helpful.";
+
     @TempDir
     Path tempDir;
 
@@ -350,6 +353,9 @@ class ThreadRuntimeCheckpointTests {
             List<Message> messages = prompt.getInstructions();
             long userMessages = messages.stream()
                     .filter(UserMessage.class::isInstance)
+                    .map(UserMessage.class::cast)
+                    .map(UserMessage::getText)
+                    .filter(text -> !LEAD_AGENT_INSTRUCTION.equals(text))
                     .count();
             long assistantMessages = messages.stream()
                     .filter(AssistantMessage.class::isInstance)
@@ -358,6 +364,7 @@ class ThreadRuntimeCheckpointTests {
             String lastUserMessage = messages.stream()
                     .filter(UserMessage.class::isInstance)
                     .map(UserMessage.class::cast)
+                    .filter(message -> !LEAD_AGENT_INSTRUCTION.equals(message.getText()))
                     .reduce((previous, current) -> current)
                     .map(UserMessage::getText)
                     .orElse("N/A");

@@ -11,7 +11,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.autoconfigure.exclude=org.springframework.ai.model.anthropic.autoconfigure.AnthropicChatAutoConfiguration"
+)
 class ThreadRuntimeControllerTests {
 
     @Autowired

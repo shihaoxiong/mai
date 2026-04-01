@@ -61,6 +61,7 @@ public class RuntimeViewImageInterceptor extends ModelInterceptor {
         List<Message> messages = new ArrayList<>(request.getMessages());
         messages.add(buildImageDetailsMessage(viewedImages));
         return handler.call(ModelRequest.builder(request)
+                .systemMessage(request.getSystemMessage())
                 .messages(messages)
                 .build());
     }

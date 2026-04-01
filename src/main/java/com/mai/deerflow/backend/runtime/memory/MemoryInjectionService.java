@@ -27,8 +27,8 @@ public class MemoryInjectionService {
     /**
      * 根据 userId 检索并筛选长期记忆，然后生成注入后的 agent 输入。
      */
-    public MemoryInjectionResult inject(String userId, String userInput) {
-        String normalizedUserInput = normalizeText(userInput);
+    public MemoryInjectionResult inject(String userId, String systemMessage) {
+        String normalizedUserInput = normalizeText(systemMessage);
         if (!properties.isEnabled() || !hasText(userId) || !hasText(normalizedUserInput)) {
             return passthrough(normalizedUserInput);
         }
@@ -45,11 +45,13 @@ public class MemoryInjectionService {
         }
 
         String strategy = normalizeText(properties.getStrategy()).toLowerCase(Locale.ROOT);
-        if (!"append-to-user-input".equals(strategy)) {
+        if (!"append-to-system-input".equals(strategy)) {
             return new MemoryInjectionResult(normalizedUserInput, memoryFacts);
         }
 
         StringBuilder promptBuilder = new StringBuilder();
+        promptBuilder.append(systemMessage).append("\n");
+        promptBuilder.append("<long-memory>\n");
         promptBuilder.append("已知的用户长期记忆（仅在和当前请求相关时使用，不要机械复述，也不要提及这是系统记忆）：\n");
         appendStructuredProfile(promptBuilder, memoryProfile);
         if (!memoryFacts.isEmpty()) {
@@ -64,8 +66,7 @@ public class MemoryInjectionService {
                         .append("\n");
             }
         }
-        promptBuilder.append("\n当前用户请求：\n")
-                .append(normalizedUserInput);
+        promptBuilder.append("</long-memory>\n");
 
         return new MemoryInjectionResult(promptBuilder.toString(), memoryFacts);
     }

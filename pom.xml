@@ -19,7 +19,7 @@
 
     <properties>
         <java.version>17</java.version>
-        <spring-ai-alibaba.version>1.1.0.0</spring-ai-alibaba.version>
+        <spring-ai-alibaba.version>1.1.2.0</spring-ai-alibaba.version>
     </properties>
 
     <dependencyManagement>
@@ -60,7 +60,7 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-minimax</artifactId>
+            <artifactId>spring-ai-starter-model-anthropic</artifactId>
         </dependency>
 
         <dependency>

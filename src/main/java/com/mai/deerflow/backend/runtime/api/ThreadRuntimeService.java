@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.Checkpoint;
 import com.alibaba.cloud.ai.graph.state.StateSnapshot;
+import com.mai.deerflow.backend.runtime.contract.RunEventEnvelope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mai.deerflow.backend.runtime.agent.AgentClarificationRequestedException;
 import com.mai.deerflow.backend.runtime.agent.AskClarificationRequest;
@@ -32,10 +33,7 @@ import com.mai.deerflow.backend.runtime.contract.TodoItem;
 import com.mai.deerflow.backend.runtime.contract.UploadRef;
 import com.mai.deerflow.backend.runtime.event.ThreadEventService;
 import com.mai.deerflow.backend.runtime.graph.RuntimeStateKeys;
-import com.mai.deerflow.backend.runtime.memory.MemoryExtractionRequest;
-import com.mai.deerflow.backend.runtime.memory.MemoryExtractorJob;
-import com.mai.deerflow.backend.runtime.memory.MemoryInjectionResult;
-import com.mai.deerflow.backend.runtime.memory.MemoryInjectionService;
+import com.mai.deerflow.backend.runtime.memory.*;
 import com.mai.deerflow.backend.runtime.model.ModelDescriptor;
 import com.mai.deerflow.backend.runtime.model.ModelRegistryService;
 import com.mai.deerflow.backend.runtime.postrun.PostRunGenerationResult;
@@ -49,6 +47,8 @@ import com.mai.deerflow.backend.runtime.workspace.ThreadWorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +71,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 /**
@@ -262,6 +264,44 @@ public class ThreadRuntimeService {
         }
 
         return executeRun(threadId, message, runId, currentSnapshot, NO_APPROVAL, threadContext, runOptions);
+    }
+
+    /**
+     * 以真正的模型流式输出执行一次线程运行，并返回 run 级事件流。
+     */
+    public Flux<RunEventEnvelope<Object>> runThreadStream(String threadId,
+                                                          String message,
+                                                          boolean approvalRequired,
+                                                          String approvalReason,
+                                                          String userId,
+                                                          RequestedRuntimeRunOptions requestedRunOptions,
+                                                          String requestedRunId) {
+        if (message == null || message.isBlank()) {
+            throw new IllegalArgumentException("message must not be blank");
+        }
+
+        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        ThreadStateSnapshot currentSnapshot = currentSnapshot(threadId, workspace);
+        ThreadContextMetadata threadContext = resolveThreadContext(threadId, userId);
+        RuntimeRunOptions runOptions = resolveRunOptions(requestedRunOptions);
+        String runId = requestedRunId == null || requestedRunId.isBlank()
+                ? UUID.randomUUID().toString()
+                : requestedRunId.trim();
+
+        if (approvalRequired) {
+            ThreadStateSnapshot waitingSnapshot = createPendingApproval(
+                    threadId,
+                    runId,
+                    message,
+                    approvalReason,
+                    currentSnapshot,
+                    workspace,
+                    runOptions
+            );
+            return Flux.just(new RunEventEnvelope<>(threadId, runId, RunEventType.APPROVAL_REQUIRED, waitingSnapshot.approval()));
+        }
+
+        return executeRunStream(threadId, message, runId, currentSnapshot, NO_APPROVAL, threadContext, runOptions);
     }
 
     /**
@@ -497,9 +537,7 @@ public class ThreadRuntimeService {
         threadEventService.emit(threadId, runId, RunEventType.RUN_STARTED, Map.of("status", RunStatus.RUNNING.name()));
 
         try {
-            String userId = normalizeOptionalUserId(threadContext == null ? null : threadContext.userId());
-            MemoryInjectionResult memoryInjectionResult = memoryInjectionService.inject(userId, message);
-            AssistantMessage assistantMessage = leadAgent.call(memoryInjectionResult.effectiveUserInput(), runtimeConfig);
+            AssistantMessage assistantMessage = leadAgent.call(message, runtimeConfig);
             OverAllState state = Optional.ofNullable(leadAgent.getCompiledGraph().getState(runtimeConfig))
                     .map(StateSnapshot::state)
                     .orElseThrow(() -> new IllegalStateException("Lead agent returned no state"));
@@ -574,6 +612,217 @@ public class ThreadRuntimeService {
         }
     }
 
+    private Flux<RunEventEnvelope<Object>> executeRunStream(String threadId,
+                                                            String message,
+                                                            String runId,
+                                                            ThreadStateSnapshot currentSnapshot,
+                                                            ApprovalState approvalState,
+                                                            ThreadContextMetadata threadContext,
+                                                            RuntimeRunOptions runOptions) {
+        ThreadWorkspace workspace = threadWorkspaceService.getOrCreateWorkspace(threadId);
+        RunnableConfig runtimeConfig = RunnableConfig.builder().threadId(threadId).build();
+        var leadAgent = runtimeLeadAgent(threadId, runId, runOptions, threadContext == null ? null : threadContext.userId());
+
+        ThreadStateSnapshot runningSnapshot = withStatus(currentSnapshot, runId, RunStatus.RUNNING, approvalState);
+        threadSnapshots.put(threadId, runningSnapshot);
+        persistLeadAgentThreadState(runningSnapshot);
+
+        RunEventEnvelope<Object> started = new RunEventEnvelope<>(
+                threadId,
+                runId,
+                RunEventType.RUN_STARTED,
+                Map.of("status", RunStatus.RUNNING.name())
+        );
+
+        Flux<RunEventEnvelope<Object>> streamedEvents;
+        try {
+            streamedEvents = leadAgent.streamMessages(message, runtimeConfig)
+                    .flatMap(streamMessage -> streamEventsFromMessage(threadId, runId, streamMessage));
+        }
+        catch (Exception exception) {
+            return handleStreamFailure(
+                    threadId,
+                    message,
+                    runId,
+                    runningSnapshot,
+                    approvalState,
+                    threadContext,
+                    workspace,
+                    runtimeConfig,
+                    runOptions,
+                    exception
+            );
+        }
+
+        Mono<RunEventEnvelope<Object>> completed = Mono.fromCallable(() -> completeStreamRun(
+                threadId,
+                message,
+                runId,
+                runningSnapshot,
+                approvalState,
+                threadContext,
+                workspace,
+                runtimeConfig,
+                leadAgent
+        ));
+
+        return Flux.concat(Flux.just(started), streamedEvents, completed)
+                .doOnNext(this::emitEvent)
+                .onErrorResume(exception -> handleStreamFailure(
+                        threadId,
+                        message,
+                        runId,
+                        runningSnapshot,
+                        approvalState,
+                        threadContext,
+                        workspace,
+                        runtimeConfig,
+                        runOptions,
+                        exception
+                ));
+    }
+
+    private Flux<RunEventEnvelope<Object>> streamEventsFromMessage(String threadId,
+                                                                   String runId,
+                                                                   Message streamMessage) {
+        if (streamMessage instanceof AssistantMessage assistantMessage) {
+            List<RunEventEnvelope<Object>> events = new ArrayList<>();
+            if (assistantMessage.getText() != null && !assistantMessage.getText().isBlank()) {
+                events.add(new RunEventEnvelope<>(threadId, runId, RunEventType.TOKEN_DELTA, assistantMessage.getText()));
+            }
+            if (assistantMessage.hasToolCalls()) {
+                events.add(new RunEventEnvelope<>(threadId, runId, RunEventType.TOOL_CALL_STARTED, assistantMessage.getToolCalls()));
+            }
+            return Flux.fromIterable(events);
+        }
+
+        if (streamMessage instanceof ToolResponseMessage toolResponseMessage) {
+            return Flux.just(new RunEventEnvelope<>(
+                    threadId,
+                    runId,
+                    RunEventType.TOOL_CALL_COMPLETED,
+                    toolResponseMessage.getResponses()
+            ));
+        }
+
+        return Flux.empty();
+    }
+
+    private RunEventEnvelope<Object> completeStreamRun(String threadId,
+                                                       String message,
+                                                       String runId,
+                                                       ThreadStateSnapshot runningSnapshot,
+                                                       ApprovalState approvalState,
+                                                       ThreadContextMetadata threadContext,
+                                                       ThreadWorkspace workspace,
+                                                       RunnableConfig runtimeConfig,
+                                                       com.alibaba.cloud.ai.graph.agent.ReactAgent leadAgent) {
+        OverAllState state = Optional.ofNullable(leadAgent.getCompiledGraph().getState(runtimeConfig))
+                .map(StateSnapshot::state)
+                .orElseThrow(() -> new IllegalStateException("Lead agent returned no state"));
+        List<UploadRef> uploads = currentUploads(threadId);
+        List<ArtifactRef> artifacts = currentArtifacts(threadId);
+        List<ThreadMessage> messages = messagesFromState(state);
+        List<TodoItem> todos = todosFromState(state);
+        List<SubTaskRecord> subTasks = currentSubTasks(threadId);
+        PostRunGenerationResult postRunGenerationResult = postRunGenerationService.generate(
+                message,
+                assistantOutputFrom(state),
+                todos,
+                uploads,
+                artifacts,
+                subTasks
+        );
+        ThreadStateSnapshot snapshot = new ThreadStateSnapshot(
+                threadId,
+                runId,
+                runStateMachine.transition(runningSnapshot.runStatus(), RunStatus.COMPLETED),
+                workspace.toState(),
+                uploads,
+                artifacts,
+                messages,
+                todos,
+                approvalState,
+                suggestionsFrom(postRunGenerationResult, state),
+                titleFrom(postRunGenerationResult, state, message)
+        );
+
+        persistLeadAgentThreadState(snapshot);
+        threadSnapshots.put(threadId, snapshot);
+        scheduleMemoryExtraction(threadContext, state, snapshot, message);
+        return new RunEventEnvelope<>(threadId, runId, RunEventType.RUN_COMPLETED, snapshot);
+    }
+
+    private Flux<RunEventEnvelope<Object>> handleStreamFailure(String threadId,
+                                                               String message,
+                                                               String runId,
+                                                               ThreadStateSnapshot currentSnapshot,
+                                                               ApprovalState approvalState,
+                                                               ThreadContextMetadata threadContext,
+                                                               ThreadWorkspace workspace,
+                                                               RunnableConfig runtimeConfig,
+                                                               RuntimeRunOptions runOptions,
+                                                               Throwable exception) {
+        AgentClarificationRequestedException clarificationException = clarificationException(exception);
+        if (clarificationException != null) {
+            ThreadStateSnapshot clarificationSnapshot = pauseForClarification(
+                    threadId,
+                    runId,
+                    message,
+                    currentSnapshot,
+                    workspace,
+                    runtimeConfig,
+                    clarificationException,
+                    runOptions
+            );
+            RunEventEnvelope<Object> event = new RunEventEnvelope<>(
+                    threadId,
+                    runId,
+                    RunEventType.APPROVAL_REQUIRED,
+                    clarificationSnapshot.approval()
+            );
+            emitEvent(event);
+            return Flux.just(event);
+        }
+
+        Optional<OverAllState> state = safeState(runtimeConfig);
+        List<ThreadMessage> messages = state.map(this::messagesFromState)
+                .filter(values -> !values.isEmpty())
+                .orElse(currentSnapshot.messages());
+        List<TodoItem> todos = state.map(this::todosFromState).orElse(currentSnapshot.todos());
+
+        ThreadStateSnapshot failedSnapshot = new ThreadStateSnapshot(
+                threadId,
+                runId,
+                runStateMachine.transition(currentSnapshot.runStatus(), RunStatus.FAILED),
+                workspace.toState(),
+                currentUploads(threadId),
+                currentArtifacts(threadId),
+                messages,
+                todos,
+                approvalState,
+                currentSnapshot.suggestions(),
+                currentSnapshot.title() == null ? deriveTitle(message) : currentSnapshot.title()
+        );
+        threadSnapshots.put(threadId, failedSnapshot);
+        persistLeadAgentThreadState(failedSnapshot);
+
+        RunEventEnvelope<Object> event = new RunEventEnvelope<>(
+                threadId,
+                runId,
+                RunEventType.RUN_FAILED,
+                Map.of("message", String.valueOf(exception.getMessage()))
+        );
+        emitEvent(event);
+        return Flux.just(event);
+    }
+
+    private void emitEvent(RunEventEnvelope<Object> event) {
+        if (event != null) {
+            threadEventService.emit(event.threadId(), event.runId(), event.eventType(), event.payload());
+        }
+    }
+
     private ThreadStateSnapshot idleSnapshot(ThreadWorkspace workspace) {
         return new ThreadStateSnapshot(
                 workspace.threadId(),
@@ -624,7 +873,7 @@ public class ThreadRuntimeService {
                 .chatOptions(chatOptionsFor(effectiveRunOptions))
                 .tools(tools)
                 .hooks(runtimeAgentEnhancementService.defaultHooks(chatModel))
-                .interceptors(runtimeInterceptors(threadId, deferredToolNames, effectiveRunOptions))
+                .interceptors(runtimeInterceptors(userId, threadId, deferredToolNames, effectiveRunOptions))
                 .toolExecutionExceptionProcessor(new RuntimeToolExecutionExceptionProcessor())
                 .saver(runtimeCheckpointService.leadAgentSaver())
                 .build());
@@ -632,7 +881,7 @@ public class ThreadRuntimeService {
         return agent;
     }
 
-    private List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> runtimeInterceptors(String threadId,
+    private List<com.alibaba.cloud.ai.graph.agent.interceptor.Interceptor> runtimeInterceptors(String userId,String threadId,
                                                                                                List<String> deferredToolNames,
                                                                                                RuntimeRunOptions runOptions) {
         RuntimeRunOptions effectiveRunOptions = effectiveRunOptions(runOptions);
@@ -642,6 +891,7 @@ public class ThreadRuntimeService {
         if (effectiveRunOptions.planModeEnabled()) {
             interceptors.add(1, new RuntimeTodoReminderInterceptor(threadId, runtimeCheckpointService, runtimeAgentEnhancementService));
         }
+        interceptors.add(new MemoryInjectionInterceptor(userId, memoryInjectionService));
         if (!deferredToolNames.isEmpty()) {
             interceptors.add(effectiveRunOptions.planModeEnabled() ? 2 : 1,
                     new RuntimeDeferredToolFilterInterceptor(deferredToolNames, objectMapper));

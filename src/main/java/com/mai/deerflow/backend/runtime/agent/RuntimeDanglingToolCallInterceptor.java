@@ -40,6 +40,7 @@ public class RuntimeDanglingToolCallInterceptor extends ModelInterceptor {
             return handler.call(request);
         }
         return handler.call(ModelRequest.builder(request)
+                .systemMessage(request.getSystemMessage())
                 .messages(patchedMessages)
                 .build());
     }

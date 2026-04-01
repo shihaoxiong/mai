@@ -61,6 +61,7 @@ public class RuntimeDeferredToolFilterInterceptor extends ModelInterceptor {
                         ));
 
         return handler.call(ModelRequest.builder(request)
+                .systemMessage(request.getSystemMessage())
                 .tools(filteredTools)
                 .toolDescriptions(filteredDescriptions)
                 .build());

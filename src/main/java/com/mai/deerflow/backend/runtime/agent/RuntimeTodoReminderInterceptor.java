@@ -50,6 +50,7 @@ public class RuntimeTodoReminderInterceptor extends ModelInterceptor {
         List<Message> messages = new ArrayList<>(request.getMessages());
         messages.add(0, new SystemMessage(reminderContent(todos)));
         return handler.call(ModelRequest.builder(request)
+                .systemMessage(request.getSystemMessage())
                 .messages(messages)
                 .build());
     }

@@ -44,6 +44,7 @@ public class RuntimeThreadContextInterceptor extends ModelInterceptor {
         messages.add(0, new SystemMessage(runtimeLeadAgentPromptService.turnContextBlock(threadId)));
 
         return handler.call(ModelRequest.builder(request)
+                .systemMessage(request.getSystemMessage())
                 .messages(messages)
                 .build());
     }
