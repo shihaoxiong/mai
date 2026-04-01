@@ -1,0 +1,5 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration
+      - org.springframework.ai.model.minimax.autoconfigure.MiniMaxEmbeddingAutoConfiguration
